@@ -74,6 +74,15 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Install Linux MCVR configure prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols
+          command -v wayland-scanner
+          wayland-scanner --version
+
       - name: Check out exact MCVR basis and recursive submodules
         shell: bash
         run: |
@@ -104,6 +113,7 @@ jobs:
             java -version 2>&1 | head -n 1 | sed 's/^/java=/'
             cmake --version | head -n 1 | sed 's/^/cmake=/'
             c++ --version | head -n 1 | sed 's/^/compiler=/'
+            wayland-scanner --version 2>&1 | head -n 1 | sed 's/^/wayland_scanner=/'
             git -C "$MCVR_ROOT" submodule status --recursive | sed 's/^/submodule=/'
           } > "$VERIFY_OUT/pre-build-basis.txt"
           sha256sum "$VERIFY_OUT/pre-build-basis.txt" > "$VERIFY_OUT/pre-build-basis.sha256"
