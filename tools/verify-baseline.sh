@@ -23,6 +23,12 @@ require_clean_tree() {
   git -C "$repo" diff --cached --quiet --ignore-submodules=none -- || fail "$label has staged tracked changes"
   [[ -z "$(git -C "$repo" ls-files --others --exclude-standard)" ]] || fail "$label has untracked files"
 }
+require_java21_runtime() {
+  local major
+  major="$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^[[:space:]]*java.version = \([0-9][0-9]*\).*/\1/p' | head -n 1)"
+  [[ "$major" =~ ^[0-9]+$ ]] || fail "could not determine active Java runtime version"
+  (( major >= 21 )) || fail "combined build requires active Java runtime >=21; found $major"
+}
 run_phase() {
   local name="$1"; shift
   local log="$OUT/${name}.log"
@@ -81,6 +87,7 @@ case "$MODE" in
     ;;
   combined-build)
     rm -f "$OUT/failed-phase.txt"
+    require_java21_runtime
     run_phase radiance-jni "$ROOT/gradlew" --no-daemon compileJava || fail "Radiance JNI generation failed"
     test -d "$ROOT/src/main/native/include" || fail "Radiance JNI include directory was not generated"
     git -C "$MCVR_ROOT" submodule update --init --recursive 2>&1 | tee "$OUT/mcvr-submodules.log" || { printf '%s\n' mcvr-submodules > "$OUT/failed-phase.txt"; fail "MCVR recursive submodule initialization failed"; }
