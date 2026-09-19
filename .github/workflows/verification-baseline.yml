@@ -79,9 +79,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols
+          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev
           command -v wayland-scanner
           wayland-scanner --version
+          pkg-config --modversion xkbcommon
 
       - name: Check out exact MCVR basis and recursive submodules
         shell: bash
@@ -114,6 +115,7 @@ jobs:
             cmake --version | head -n 1 | sed 's/^/cmake=/'
             c++ --version | head -n 1 | sed 's/^/compiler=/'
             wayland-scanner --version 2>&1 | head -n 1 | sed 's/^/wayland_scanner=/'
+            pkg-config --modversion xkbcommon | sed 's/^/xkbcommon=/'
             git -C "$MCVR_ROOT" submodule status --recursive | sed 's/^/submodule=/'
           } > "$VERIFY_OUT/pre-build-basis.txt"
           sha256sum "$VERIFY_OUT/pre-build-basis.txt" > "$VERIFY_OUT/pre-build-basis.sha256"
