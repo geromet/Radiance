@@ -37,14 +37,14 @@ jobs:
         env:
           MCVR_ROOT: ${{ runner.temp }}/MCVR
           VERIFY_OUT: ${{ runner.temp }}/verification/positive
-        run: ./tools/verify-baseline.sh boundary
+        run: bash ./tools/verify-baseline.sh boundary
 
       - name: Run deliberate negative through same verifier
         shell: bash
         env:
           MCVR_ROOT: ${{ runner.temp }}/MCVR
           VERIFY_OUT: ${{ runner.temp }}/verification/negative
-        run: ./tools/verify-baseline.sh boundary-negative
+        run: bash ./tools/verify-baseline.sh boundary-negative
 
       - name: Retain verification evidence
         if: always()
