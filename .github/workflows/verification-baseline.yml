@@ -68,6 +68,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Select Java 21 runtime
+        uses: actions/setup-java@7a445ee88d4e23b52c33db211dd84584518b96a1 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Check out exact MCVR basis and recursive submodules
         shell: bash
         run: |
