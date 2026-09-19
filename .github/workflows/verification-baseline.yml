@@ -1,0 +1,56 @@
+name: Verification baseline
+
+on:
+  pull_request:
+  push:
+    branches:
+      - phase0/487-verification-baseline
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      TZ: UTC
+    steps:
+      - name: Check out Radiance
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out exact MCVR basis
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/geromet/MCVR.git "$RUNNER_TEMP/MCVR"
+          git -C "$RUNNER_TEMP/MCVR" checkout --detach 69c87af5c88b6f2773a483a1c21d139ceddce78e
+          test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = 69c87af5c88b6f2773a483a1c21d139ceddce78e
+
+      - name: Run positive boundary verifier
+        shell: bash
+        env:
+          MCVR_ROOT: ${{ runner.temp }}/MCVR
+          VERIFY_OUT: ${{ runner.temp }}/verification/positive
+        run: ./tools/verify-baseline.sh boundary
+
+      - name: Run deliberate negative through same verifier
+        shell: bash
+        env:
+          MCVR_ROOT: ${{ runner.temp }}/MCVR
+          VERIFY_OUT: ${{ runner.temp }}/verification/negative
+        run: ./tools/verify-baseline.sh boundary-negative
+
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verification
+          if-no-files-found: warn
+          retention-days: 14
