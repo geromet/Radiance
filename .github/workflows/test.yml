@@ -1,13 +1,47 @@
-name: test
-on: [push, pull_request]
+name: Radiance headless unit tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - test-suite-and-blockers
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      TZ: UTC
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Check out Radiance
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Select Java 21 runtime
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           distribution: temurin
-          java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew test
+          java-version: '21'
+
+      - name: Record unit-test basis
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "radiance_head=$(git rev-parse HEAD)"
+          echo "runner_os=${RUNNER_OS}"
+          echo "runner_arch=${RUNNER_ARCH}"
+          echo "image_os=${ImageOS:-unknown}"
+          echo "image_version=${ImageVersion:-unknown}"
+          java -version
+          ./gradlew --version
+
+      - name: Run headless unit tests
+        shell: bash
+        run: ./gradlew test --no-daemon
