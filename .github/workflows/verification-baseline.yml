@@ -85,10 +85,10 @@ jobs:
           pkg-config --modversion xkbcommon
           pkg-config --modversion x11
           pkg-config --modversion xrandr
-          pkg-config --modversion xi
-          pkg-config --modversion vulkannerama
+          pkg-config --modversion xinerama
           pkg-config --modversion xcursor
           pkg-config --modversion xi
+          pkg-config --modversion vulkan
 
       - name: Check out exact MCVR basis and recursive submodules
         shell: bash
