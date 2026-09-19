@@ -93,7 +93,10 @@ case "$MODE" in
     git -C "$MCVR_ROOT" submodule update --init --recursive 2>&1 | tee "$OUT/mcvr-submodules.log" || { printf '%s\n' mcvr-submodules > "$OUT/failed-phase.txt"; fail "MCVR recursive submodule initialization failed"; }
     MCVR_BUILD="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/mcvr-build.XXXXXX")"
     trap 'rm -rf "$MCVR_BUILD"' EXIT
-    run_phase mcvr-configure cmake -S "$MCVR_ROOT" -B "$MCVR_BUILD" -DCMAKE_BUILD_TYPE=Release -DJAVA_PROJECT_ROOT_DIR="$ROOT" -DUSE_AMD=ON -DMCVR_ENABLE_NRD=ON || fail "MCVR configure failed"
+    # The pinned FidelityFX-SDK shader prebuild invokes Windows cl.exe even on Linux.
+    # Keep this hosted Linux baseline representative for the renderer's portable path;
+    # FFX/DLSS/GPU-only proof belongs to the separate hardware-in-loop contract.
+    run_phase mcvr-configure cmake -S "$MCVR_ROOT" -B "$MCVR_BUILD" -DCMAKE_BUILD_TYPE=Release -DJAVA_PROJECT_ROOT_DIR="$ROOT" -DUSE_AMD=ON -DMCVR_ENABLE_FFX_UPSCALER=OFF -DMCVR_ENABLE_NRD=ON || fail "MCVR configure failed"
     run_phase mcvr-build cmake --build "$MCVR_BUILD" --parallel "${BUILD_JOBS:-2}" || fail "MCVR build failed"
     run_phase mcvr-install cmake --install "$MCVR_BUILD" || fail "MCVR install failed"
     run_phase radiance-package "$ROOT/gradlew" --no-daemon build || fail "final Radiance package failed"
