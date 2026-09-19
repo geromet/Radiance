@@ -91,8 +91,8 @@ case "$MODE" in
     run_phase radiance-jni "$ROOT/gradlew" --no-daemon compileJava || fail "Radiance JNI generation failed"
     test -d "$ROOT/src/main/native/include" || fail "Radiance JNI include directory was not generated"
     git -C "$MCVR_ROOT" submodule update --init --recursive 2>&1 | tee "$OUT/mcvr-submodules.log" || { printf '%s\n' mcvr-submodules > "$OUT/failed-phase.txt"; fail "MCVR recursive submodule initialization failed"; }
-    MCVR_BUILD="$OUT/mcvr-build"
-    rm -rf "$MCVR_BUILD"
+    MCVR_BUILD="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/mcvr-build.XXXXXX")"
+    trap 'rm -rf "$MCVR_BUILD"' EXIT
     run_phase mcvr-configure cmake -S "$MCVR_ROOT" -B "$MCVR_BUILD" -DCMAKE_BUILD_TYPE=Release -DJAVA_PROJECT_ROOT_DIR="$ROOT" -DUSE_AMD=ON -DMCVR_ENABLE_NRD=ON || fail "MCVR configure failed"
     run_phase mcvr-build cmake --build "$MCVR_BUILD" --parallel "${BUILD_JOBS:-2}" || fail "MCVR build failed"
     run_phase mcvr-install cmake --install "$MCVR_BUILD" || fail "MCVR install failed"
