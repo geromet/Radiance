@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libvulkan-dev libshaderc-dev glslang-tools libgl-dev
+          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libvulkan-dev glslang-tools libgl-dev ninja-build
           command -v wayland-scanner
           wayland-scanner --version
           pkg-config --modversion xkbcommon
@@ -89,12 +89,38 @@ jobs:
           pkg-config --modversion xcursor
           pkg-config --modversion xi
           pkg-config --modversion vulkan
-          test -f /usr/include/shaderc/shaderc.hpp
-          ldconfig -p | grep -E 'libshaderc(_combined|_shared)?\.so' >/dev/null
+          command -v ninja
           command -v glslangValidator
           glslangValidator --version
           test -f /usr/include/GL/gl.h
           pkg-config --modversion gl
+
+      - name: Build exact Shaderc Vulkan 1.4 basis
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHADERC_COMMIT=8d9eb88789a15fa4ac75e6b22ce504a499014578
+          SHADERC_ROOT="$RUNNER_TEMP/shaderc-src"
+          SHADERC_BUILD="$RUNNER_TEMP/shaderc-build"
+          SHADERC_PREFIX="$RUNNER_TEMP/shaderc-install"
+          git clone --filter=blob:none https://github.com/google/shaderc.git "$SHADERC_ROOT"
+          git -C "$SHADERC_ROOT" checkout --detach "$SHADERC_COMMIT"
+          test "$(git -C "$SHADERC_ROOT" rev-parse HEAD)" = "$SHADERC_COMMIT"
+          python3 "$SHADERC_ROOT/utils/git-sync-deps"
+          grep -q 'shaderc_env_version_vulkan_1_4' "$SHADERC_ROOT/libshaderc/include/shaderc/env.h"
+          cmake -S "$SHADERC_ROOT" -B "$SHADERC_BUILD" -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$SHADERC_PREFIX" \
+            -DSHADERC_SKIP_TESTS=ON \
+            -DSHADERC_SKIP_EXAMPLES=ON \
+            -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
+            -DSHADERC_ENABLE_WERROR_COMPILE=OFF
+          cmake --build "$SHADERC_BUILD" --parallel 2
+          cmake --install "$SHADERC_BUILD"
+          test -f "$SHADERC_PREFIX/include/shaderc/shaderc.hpp"
+          grep -q 'shaderc_env_version_vulkan_1_4' "$SHADERC_PREFIX/include/shaderc/env.h"
+          find "$SHADERC_PREFIX" -type f -name 'libshaderc*' -print -quit | grep -q .
+          echo "VULKAN_SDK=$SHADERC_PREFIX" >> "$GITHUB_ENV"
 
       - name: Check out exact MCVR basis and recursive submodules
         shell: bash
@@ -136,7 +162,13 @@ jobs:
             pkg-config --modversion xcursor | sed 's/^/xcursor=/'
             pkg-config --modversion xi | sed 's/^/xi=/'
             pkg-config --modversion vulkan | sed 's/^/vulkan=/'
-            dpkg-query -W -f='shaderc_package=${Version}\n' libshaderc-dev
+            echo "shaderc_source=$(git -C "$RUNNER_TEMP/shaderc-src" rev-parse HEAD)"
+            sha256sum "$RUNNER_TEMP/shaderc-src/DEPS" | sed 's#  .*#  shaderc_DEPS#'
+            for dep in abseil_cpp effcee googletest glslang re2 spirv-headers spirv-tools; do
+              echo "shaderc_dep_${dep}=$(git -C "$RUNNER_TEMP/shaderc-src/third_party/$dep" rev-parse HEAD)"
+            done
+            grep 'shaderc_env_version_vulkan_1_4' "$VULKAN_SDK/include/shaderc/env.h" | head -n 1 | sed 's/^/shaderc_vulkan14_api=/'
+            find "$VULKAN_SDK" -type f -name 'libshaderc*' -print -quit | sed 's/^/shaderc_library=/'
             dpkg-query -W -f='glslang_tools_package=${Version}\n' glslang-tools
             glslangValidator --version | head -n 1 | sed 's/^/glslangValidator=/'
             dpkg-query -W -f='libgl_dev_package=${Version}\\n' libgl-dev
