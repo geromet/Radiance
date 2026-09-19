@@ -46,6 +46,13 @@ jobs:
           VERIFY_OUT: ${{ runner.temp }}/verification/negative
         run: bash ./tools/verify-baseline.sh boundary-negative
 
+      - name: Prove exact Java 21 major guard
+        shell: bash
+        env:
+          MCVR_ROOT: ${{ runner.temp }}/MCVR
+          VERIFY_OUT: ${{ runner.temp }}/verification/java-major-negative
+        run: bash ./tools/verify-baseline.sh java-major-negative
+
       - name: Retain verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
