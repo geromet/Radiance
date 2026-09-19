@@ -23,6 +23,16 @@ require_clean_tree() {
   git -C "$repo" diff --cached --quiet --ignore-submodules=none -- || fail "$label has staged tracked changes"
   [[ -z "$(git -C "$repo" ls-files --others --exclude-standard)" ]] || fail "$label has untracked files"
 }
+run_phase() {
+  local name="$1"; shift
+  local log="$OUT/${name}.log"
+  echo "==> $name" | tee "$log"
+  if ! "$@" 2>&1 | tee -a "$log"; then
+    printf '%s\n' "$name" > "$OUT/failed-phase.txt"
+    return 1
+  fi
+  printf 'PASS\n' > "$OUT/${name}.status"
+}
 
 RADIANCE_HEAD="$(sha "$ROOT")"
 [[ "$RADIANCE_HEAD" =~ ^[0-9a-f]{40}$ ]] || fail "invalid Radiance HEAD"
@@ -69,8 +79,21 @@ case "$MODE" in
     fi
     echo 'negative control rejected corrupted canonical input under unchanged boundary contract as expected'
     ;;
+  combined-build)
+    rm -f "$OUT/failed-phase.txt"
+    run_phase radiance-jni "$ROOT/gradlew" --no-daemon compileJava || fail "Radiance JNI generation failed"
+    test -d "$ROOT/src/main/native/include" || fail "Radiance JNI include directory was not generated"
+    git -C "$MCVR_ROOT" submodule update --init --recursive 2>&1 | tee "$OUT/mcvr-submodules.log" || { printf '%s\n' mcvr-submodules > "$OUT/failed-phase.txt"; fail "MCVR recursive submodule initialization failed"; }
+    MCVR_BUILD="$OUT/mcvr-build"
+    rm -rf "$MCVR_BUILD"
+    run_phase mcvr-configure cmake -S "$MCVR_ROOT" -B "$MCVR_BUILD" -DCMAKE_BUILD_TYPE=Release -DJAVA_PROJECT_ROOT_DIR="$ROOT" -DUSE_AMD=ON -DMCVR_ENABLE_NRD=ON || fail "MCVR configure failed"
+    run_phase mcvr-build cmake --build "$MCVR_BUILD" --parallel "${BUILD_JOBS:-2}" || fail "MCVR build failed"
+    run_phase mcvr-install cmake --install "$MCVR_BUILD" || fail "MCVR install failed"
+    run_phase radiance-package "$ROOT/gradlew" --no-daemon build || fail "final Radiance package failed"
+    find "$ROOT/build/libs" -maxdepth 1 -type f -print0 | sort -z | xargs -0 -r sha256sum > "$OUT/radiance-artifacts.sha256"
+    ;;
   *)
-    echo "usage: $0 {manifest|boundary|boundary-negative}" >&2
+    echo "usage: $0 {manifest|boundary|boundary-negative|combined-build}" >&2
     exit 2
     ;;
 esac
@@ -93,6 +116,8 @@ cat > "$OUT/input-manifest.json" <<EOF
   "environment": {
     "java": "$(version_line java -version | sed 's/"/\\"/g')",
     "gradle_wrapper": "$(grep '^distributionUrl=' "$ROOT/gradle/wrapper/gradle-wrapper.properties" | cut -d= -f2- | sed 's/\\/\\\\/g; s/"/\\"/g')",
+    "cmake": "$(version_line cmake --version | sed 's/"/\\"/g')",
+    "compiler": "$(version_line c++ --version | sed 's/"/\\"/g')",
     "kernel": "$(uname -sr | sed 's/"/\\"/g')",
     "os": "$(uname -sm | sed 's/"/\\"/g')",
     "locale": "${LC_ALL:-${LANG:-unknown}}",
