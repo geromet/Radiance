@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libvulkan-dev libshaderc-dev glslang-tools
+          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libvulkan-dev libshaderc-dev glslang-tools libgl-dev
           command -v wayland-scanner
           wayland-scanner --version
           pkg-config --modversion xkbcommon
@@ -93,6 +93,8 @@ jobs:
           ldconfig -p | grep -E 'libshaderc(_combined|_shared)?\.so' >/dev/null
           command -v glslangValidator
           glslangValidator --version
+          test -f /usr/include/GL/gl.h
+          pkg-config --modversion gl
 
       - name: Check out exact MCVR basis and recursive submodules
         shell: bash
@@ -135,6 +137,8 @@ jobs:
             dpkg-query -W -f='shaderc_package=${Version}\n' libshaderc-dev
             dpkg-query -W -f='glslang_tools_package=${Version}\n' glslang-tools
             glslangValidator --version | head -n 1 | sed 's/^/glslangValidator=/'
+            dpkg-query -W -f='libgl_dev_package=${Version}\\n' libgl-dev
+            pkg-config --modversion gl | sed 's/^/gl=/'
             git -C "$MCVR_ROOT" submodule status --recursive | sed 's/^/submodule=/'
           } > "$VERIFY_OUT/pre-build-basis.txt"
           sha256sum "$VERIFY_OUT/pre-build-basis.txt" > "$VERIFY_OUT/pre-build-basis.sha256"
