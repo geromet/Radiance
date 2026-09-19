@@ -45,7 +45,7 @@ verify_boundary() {
   local expected_wrapper="$1"
   test -x "$ROOT/gradlew" || return 1
   grep -q "gradle-${expected_wrapper}-" "$ROOT/gradle/wrapper/gradle-wrapper.properties" || return 1
-  grep -q 'JavaLanguageVersion.of(21)' "$ROOT/build.gradle" || return 1
+  grep -Eq 'JavaVersion\.toVersion\(targetJavaVersion\)|JavaLanguageVersion\.of\((21|targetJavaVersion)\)' "$ROOT/build.gradle" || return 1
   grep -q 'src/main/native/include' "$ROOT/build.gradle" || return 1
 }
 
