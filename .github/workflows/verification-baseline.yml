@@ -29,8 +29,8 @@ jobs:
         run: |
           set -euo pipefail
           git clone --filter=blob:none https://github.com/geromet/MCVR.git "$RUNNER_TEMP/MCVR"
-          git -C "$RUNNER_TEMP/MCVR" checkout --detach 69c87af5c88b6f2773a483a1c21d139ceddce78e
-          test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = 69c87af5c88b6f2773a483a1c21d139ceddce78e
+          git -C "$RUNNER_TEMP/MCVR" checkout --detach c2c203c82f85d4b99bb0fff3d3a591986119f2c3
+          test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = c2c203c82f85d4b99bb0fff3d3a591986119f2c3
 
       - name: Run positive boundary verifier
         shell: bash
@@ -101,9 +101,11 @@ jobs:
         run: |
           set -euo pipefail
           git clone https://github.com/geromet/MCVR.git "$RUNNER_TEMP/MCVR"
-          git -C "$RUNNER_TEMP/MCVR" checkout --detach 69c87af5c88b6f2773a483a1c21d139ceddce78e
-          test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = 69c87af5c88b6f2773a483a1c21d139ceddce78e
+          git -C "$RUNNER_TEMP/MCVR" checkout --detach c2c203c82f85d4b99bb0fff3d3a591986119f2c3
+          test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = c2c203c82f85d4b99bb0fff3d3a591986119f2c3
           git -C "$RUNNER_TEMP/MCVR" submodule update --init --recursive
+          test -f "$RUNNER_TEMP/MCVR/extern/vulkan_headers/include/vulkan/vulkan_core.h"
+          test "$(git -C "$RUNNER_TEMP/MCVR/extern/vulkan_headers" rev-parse HEAD)" = 49f1a381e2aec33ef32adf4a377b5a39ec016ec4
 
       - name: Record pre-build attempt basis
         shell: bash
@@ -139,6 +141,8 @@ jobs:
             glslangValidator --version | head -n 1 | sed 's/^/glslangValidator=/'
             dpkg-query -W -f='libgl_dev_package=${Version}\\n' libgl-dev
             pkg-config --modversion gl | sed 's/^/gl=/'
+            echo "vulkan_headers_submodule=$(git -C "$MCVR_ROOT/extern/vulkan_headers" rev-parse HEAD)"
+            awk '/^#define VK_HEADER_VERSION / { found=1; print "vulkan_headers_header_version="$3 } END { exit found ? 0 : 1 }' "$MCVR_ROOT/extern/vulkan_headers/include/vulkan/vulkan_core.h"
             git -C "$MCVR_ROOT" submodule status --recursive | sed 's/^/submodule=/'
           } > "$VERIFY_OUT/pre-build-basis.txt"
           sha256sum "$VERIFY_OUT/pre-build-basis.txt" > "$VERIFY_OUT/pre-build-basis.sha256"
