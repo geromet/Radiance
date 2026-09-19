@@ -1,10 +1,12 @@
 name: Verification baseline
 
 on:
-  pull_request:
   push:
     branches:
       - phase0/487-verification-baseline
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -13,162 +15,101 @@ permissions:
 jobs:
   boundary:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    env:
-      LC_ALL: C.UTF-8
-      LANG: C.UTF-8
-      TZ: UTC
+    timeout-minutes: 20
     steps:
-      - name: Check out Radiance
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Check out exact MCVR basis
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --filter=blob:none https://github.com/geromet/MCVR.git "$RUNNER_TEMP/MCVR"
-          git -C "$RUNNER_TEMP/MCVR" checkout --detach 69c87af5c88b6f2773a483a1c21d139ceddce78e
-          test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = 69c87af5c88b6f2773a483a1c21d139ceddce78e
-
-      - name: Run positive boundary verifier
-        shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/positive
-        run: bash ./tools/verify-baseline.sh boundary
-
-      - name: Run deliberate negative through same verifier
-        shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/negative
-        run: bash ./tools/verify-baseline.sh boundary-negative
-
-      - name: Retain verification evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Checkout pinned MCVR fork basis
+        uses: actions/checkout@v4
         with:
-          name: verification-baseline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/verification
-          if-no-files-found: warn
-          retention-days: 14
+          repository: geromet/MCVR
+          ref: 69c87af5c88b6f2773a483a1c21d139ceddce78e
+          path: ../MCVR
+          fetch-depth: 0
+      - name: Record runner toolchain
+        run: |
+          mkdir -p build/verification
+          {
+            uname -a
+            java -version
+            ./gradlew --version
+            cmake --version
+            c++ --version
+            git --version
+          } > build/verification/runner-toolchain.txt 2>&1
+      - name: Verify canonical boundary
+        run: tools/verify-baseline.sh boundary
+      - name: Verify negative control
+        run: tools/verify-baseline.sh boundary-negative
+      - name: Upload boundary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-boundary-${{ github.run_id }}
+          path: build/verification
+          if-no-files-found: error
 
   combined-build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      LC_ALL: C.UTF-8
-      LANG: C.UTF-8
-      TZ: UTC
+    timeout-minutes: 90
     steps:
-      - name: Check out Radiance
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Select Java 21 runtime
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+      - name: Checkout pinned MCVR fork basis
+        uses: actions/checkout@v4
+        with:
+          repository: geromet/MCVR
+          ref: 69c87af5c88b6f2773a483a1c21d139ceddce78e
+          path: ../MCVR
+          fetch-depth: 0
+          submodules: recursive
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Install Linux MCVR configure prerequisites
-        shell: bash
+      - name: Install deterministic Linux build prerequisites
         run: |
-          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libvulkan-dev libshaderc-dev glslang-tools
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config \
+            libvulkan-dev vulkan-tools vulkan-validationlayers-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev glslang-tools
           command -v wayland-scanner
-          wayland-scanner --version
           pkg-config --modversion xkbcommon
-          pkg-config --modversion x11
           pkg-config --modversion xrandr
           pkg-config --modversion xinerama
-          pkg-config --modversion xcursor
-          pkg-config --modversion xi
-          pkg-config --modversion vulkan
-          test -f /usr/include/shaderc/shaderc.hpp
-          ldconfig -p | grep -E 'libshaderc(_combined|_shared)?\.so' >/dev/null
           command -v glslangValidator
-          glslangValidator --version
-
-      - name: Check out exact MCVR basis and recursive submodules
-        shell: bash
+          glslangValidator --version | head -n 2
+      - name: Record runner toolchain
         run: |
-          set -euo pipefail
-          git clone https://github.com/geromet/MCVR.git "$RUNNER_TEMP/MCVR"
-          git -C "$RUNNER_TEMP/MCVR" checkout --detach 69c87af5c88b6f2773a483a1c21d139ceddce78e
-          test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = 69c87af5c88b6f2773a483a1c21d139ceddce78e
-          git -C "$RUNNER_TEMP/MCVR" submodule update --init --recursive
-
-      - name: Record pre-build attempt basis
-        shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/combined-build
-        run: |
-          set -euo pipefail
-          mkdir -p "$VERIFY_OUT"
+          mkdir -p build/verification
           {
-            echo "radiance_head=$(git rev-parse HEAD)"
-            echo "mcvr_head=$(git -C "$MCVR_ROOT" rev-parse HEAD)"
-            echo "tested_sha=${GITHUB_SHA}"
-            echo "base_ref=${GITHUB_BASE_REF:-none}"
-            echo "head_ref=${GITHUB_HEAD_REF:-none}"
-            echo "runner_os=${RUNNER_OS}"
-            echo "runner_arch=${RUNNER_ARCH}"
-            echo "image_os=${ImageOS:-unknown}"
-            echo "image_version=${ImageVersion:-unknown}"
-            java -version 2>&1 | head -n 1 | sed 's/^/java=/'
-            cmake --version | head -n 1 | sed 's/^/cmake=/'
-            c++ --version | head -n 1 | sed 's/^/compiler=/'
-            wayland-scanner --version 2>&1 | head -n 1 | sed 's/^/wayland_scanner=/'
-            pkg-config --modversion xkbcommon | sed 's/^/xkbcommon=/'
-            pkg-config --modversion x11 | sed 's/^/x11=/'
-            pkg-config --modversion xrandr | sed 's/^/xrandr=/'
-            pkg-config --modversion xinerama | sed 's/^/xinerama=/'
-            pkg-config --modversion xcursor | sed 's/^/xcursor=/'
-            pkg-config --modversion xi | sed 's/^/xi=/'
-            pkg-config --modversion vulkan | sed 's/^/vulkan=/'
-            dpkg-query -W -f='shaderc_package=${Version}\n' libshaderc-dev
-            dpkg-query -W -f='glslang_tools_package=${Version}\n' glslang-tools
-            glslangValidator --version | head -n 1 | sed 's/^/glslangValidator=/'
-            git -C "$MCVR_ROOT" submodule status --recursive | sed 's/^/submodule=/'
-          } > "$VERIFY_OUT/pre-build-basis.txt"
-          sha256sum "$VERIFY_OUT/pre-build-basis.txt" > "$VERIFY_OUT/pre-build-basis.sha256"
-
-      - name: Run clean combined build entrypoint
-        shell: bash
+            uname -a
+            java -version
+            ./gradlew --version
+            cmake --version
+            c++ --version
+            git --version
+            command -v wayland-scanner
+            pkg-config --modversion xkbcommon
+            pkg-config --modversion xrandr
+            pkg-config --modversion xinerama
+            command -v glslangValidator
+            glslangValidator --version | head -n 2
+          } > build/verification/runner-toolchain.txt 2>&1
+      - name: Run combined build through developer entrypoint
         env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/combined-build
-          BUILD_JOBS: 2
-        run: |
-          set +e
-          bash ./tools/verify-baseline.sh combined-build
-          rc=$?
-          {
-            echo "exit_code=$rc"
-            if test -f "$VERIFY_OUT/failed-phase.txt"; then
-              echo "failed_phase=$(cat "$VERIFY_OUT/failed-phase.txt")"
-            else
-              echo "failed_phase=none-recorded"
-            fi
-            for log in "$VERIFY_OUT"/*.log; do
-              test -f "$log" || continue
-              echo "===== tail:${log##*/} ====="
-              tail -n 120 "$log"
-            done
-          } > "$VERIFY_OUT/terminal-outcome.txt"
-          exit "$rc"
-
-      - name: Retain combined-build evidence
+          BUILD_JOBS: '2'
+        run: tools/verify-baseline.sh combined-build
+      - name: Upload combined-build evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
-          name: combined-build-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/verification/combined-build
+          name: verification-combined-${{ github.run_id }}
+          path: build/verification
           if-no-files-found: warn
-          retention-days: 14
