@@ -79,13 +79,16 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev
+          sudo apt-get install --no-install-recommends -y libwayland-dev wayland-protocols libxkbcommon-dev xorg-dev
           command -v wayland-scanner
           wayland-scanner --version
           pkg-config --modversion xkbcommon
           pkg-config --modversion x11
           pkg-config --modversion xrandr
           pkg-config --modversion xinerama
+          pkg-config --modversion xcursor
+          pkg-config --modversion xi
+          pkg-config --modversion xext
 
       - name: Check out exact MCVR basis and recursive submodules
         shell: bash
@@ -122,6 +125,9 @@ jobs:
             pkg-config --modversion x11 | sed 's/^/x11=/'
             pkg-config --modversion xrandr | sed 's/^/xrandr=/'
             pkg-config --modversion xinerama | sed 's/^/xinerama=/'
+            pkg-config --modversion xcursor | sed 's/^/xcursor=/'
+            pkg-config --modversion xi | sed 's/^/xi=/'
+            pkg-config --modversion xext | sed 's/^/xext=/'
             git -C "$MCVR_ROOT" submodule status --recursive | sed 's/^/submodule=/'
           } > "$VERIFY_OUT/pre-build-basis.txt"
           sha256sum "$VERIFY_OUT/pre-build-basis.txt" > "$VERIFY_OUT/pre-build-basis.sha256"
