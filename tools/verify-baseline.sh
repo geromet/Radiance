@@ -42,30 +42,32 @@ require_ancestor "$MCVR_ROOT" "$MCVR_UPSTREAM_SOURCE" "$MCVR_FORK_BASE"
 require_clean_tree "$MCVR_ROOT" "MCVR"
 
 verify_boundary() {
-  local wrapper_properties="${1:-$ROOT/gradle/wrapper/gradle-wrapper.properties}"
-  test -x "$ROOT/gradlew" || return 1
-  grep -q 'gradle-8\.14\.1-' "$wrapper_properties" || return 1
-  grep -Eq 'JavaVersion\.toVersion\(targetJavaVersion\)|JavaLanguageVersion\.of\((21|targetJavaVersion)\)' "$ROOT/build.gradle" || return 1
-  grep -q 'src/main/native/include' "$ROOT/build.gradle" || return 1
+  local verify_root="$1"
+  test -x "$verify_root/gradlew" || return 1
+  grep -q 'gradle-8\.14\.1-' "$verify_root/gradle/wrapper/gradle-wrapper.properties" || return 1
+  grep -Eq 'JavaVersion\.toVersion\(targetJavaVersion\)|JavaLanguageVersion\.of\((21|targetJavaVersion)\)' "$verify_root/build.gradle" || return 1
+  grep -q 'src/main/native/include' "$verify_root/build.gradle" || return 1
 }
 
 case "$MODE" in
   manifest)
     ;;
   boundary)
-    verify_boundary || fail "boundary verification failed"
+    verify_boundary "$ROOT" || fail "boundary verification failed"
     ;;
   boundary-negative)
-    negative_dir="$(mktemp -d "$OUT/boundary-negative.XXXXXX")"
-    trap 'rm -rf "$negative_dir"' EXIT
-    negative_wrapper="$negative_dir/gradle-wrapper.properties"
-    cp "$ROOT/gradle/wrapper/gradle-wrapper.properties" "$negative_wrapper"
-    sed -i 's/gradle-8\.14\.1-/gradle-0.0.0-/' "$negative_wrapper"
-    cmp -s "$ROOT/gradle/wrapper/gradle-wrapper.properties" "$negative_wrapper" && fail "negative control did not corrupt the disposable wrapper input"
-    if verify_boundary "$negative_wrapper"; then
-      fail "negative control unexpectedly accepted corrupted consumed boundary input"
+    negative_root="$(mktemp -d "$OUT/boundary-negative.XXXXXX")"
+    trap 'rm -rf "$negative_root"' EXIT
+    mkdir -p "$negative_root/gradle/wrapper"
+    cp "$ROOT/gradlew" "$negative_root/gradlew"
+    cp "$ROOT/build.gradle" "$negative_root/build.gradle"
+    cp "$ROOT/gradle/wrapper/gradle-wrapper.properties" "$negative_root/gradle/wrapper/gradle-wrapper.properties"
+    sed -i 's/gradle-8\.14\.1-/gradle-0.0.0-/' "$negative_root/gradle/wrapper/gradle-wrapper.properties"
+    cmp -s "$ROOT/gradle/wrapper/gradle-wrapper.properties" "$negative_root/gradle/wrapper/gradle-wrapper.properties" && fail "negative control did not corrupt the disposable canonical wrapper input"
+    if verify_boundary "$negative_root"; then
+      fail "negative control unexpectedly accepted corrupted canonical boundary input"
     fi
-    echo 'negative control rejected corrupted attempt-local wrapper input as expected'
+    echo 'negative control rejected corrupted canonical input under unchanged boundary contract as expected'
     ;;
   *)
     echo "usage: $0 {manifest|boundary|boundary-negative}" >&2
