@@ -23,11 +23,19 @@ require_clean_tree() {
   git -C "$repo" diff --cached --quiet --ignore-submodules=none -- || fail "$label has staged tracked changes"
   [[ -z "$(git -C "$repo" ls-files --others --exclude-standard)" ]] || fail "$label has untracked files"
 }
-require_java21_runtime() {
-  local major
-  major="$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^[[:space:]]*java.version = \([0-9][0-9]*\).*/\1/p' | head -n 1)"
+java_major_from_settings() {
+  sed -n 's/^[[:space:]]*java.version = \([0-9][0-9]*\).*/\1/p' | head -n 1
+}
+require_exact_java21_settings() {
+  local settings="$1" major
+  major="$(printf '%s\n' "$settings" | java_major_from_settings)"
   [[ "$major" =~ ^[0-9]+$ ]] || fail "could not determine active Java runtime version"
-  (( major >= 21 )) || fail "combined build requires active Java runtime >=21; found $major"
+  [[ "$major" == 21 ]] || fail "combined build requires exact Java major 21; found $major"
+}
+require_java21_runtime() {
+  local settings
+  settings="$(java -XshowSettings:properties -version 2>&1)"
+  require_exact_java21_settings "$settings"
 }
 run_phase() {
   local name="$1"; shift
@@ -85,6 +93,13 @@ case "$MODE" in
     fi
     echo 'negative control rejected corrupted canonical input under unchanged boundary contract as expected'
     ;;
+  java-major-negative)
+    if (require_exact_java21_settings '    java.version = 22.0.1'); then
+      fail "Java 22+ negative control unexpectedly passed exact-Java-21 guard"
+    fi
+    require_exact_java21_settings '    java.version = 21.0.8'
+    echo 'Java major negative rejected 22 and positive accepted 21 under the shared guard as expected'
+    ;;
   combined-build)
     rm -f "$OUT/failed-phase.txt"
     require_java21_runtime
@@ -103,7 +118,7 @@ case "$MODE" in
     find "$ROOT/build/libs" -maxdepth 1 -type f -print0 | sort -z | xargs -0 -r sha256sum > "$OUT/radiance-artifacts.sha256"
     ;;
   *)
-    echo "usage: $0 {manifest|boundary|boundary-negative|combined-build}" >&2
+    echo "usage: $0 {manifest|boundary|boundary-negative|java-major-negative|combined-build}" >&2
     exit 2
     ;;
 esac
