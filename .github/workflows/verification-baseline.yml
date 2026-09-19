@@ -77,13 +77,55 @@ jobs:
           test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = 69c87af5c88b6f2773a483a1c21d139ceddce78e
           git -C "$RUNNER_TEMP/MCVR" submodule update --init --recursive
 
+      - name: Record pre-build attempt basis
+        shell: bash
+        env:
+          MCVR_ROOT: ${{ runner.temp }}/MCVR
+          VERIFY_OUT: ${{ runner.temp }}/verification/combined-build
+        run: |
+          set -euo pipefail
+          mkdir -p "$VERIFY_OUT"
+          {
+            echo "radiance_head=$(git rev-parse HEAD)"
+            echo "mcvr_head=$(git -C "$MCVR_ROOT" rev-parse HEAD)"
+            echo "tested_sha=${GITHUB_SHA}"
+            echo "base_ref=${GITHUB_BASE_REF:-none}"
+            echo "head_ref=${GITHUB_HEAD_REF:-none}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "image_os=${ImageOS:-unknown}"
+            echo "image_version=${ImageVersion:-unknown}"
+            java -version 2>&1 | head -n 1 | sed 's/^/java=/'
+            cmake --version | head -n 1 | sed 's/^/cmake=/'
+            c++ --version | head -n 1 | sed 's/^/compiler=/'
+            git -C "$MCVR_ROOT" submodule status --recursive | sed 's/^/submodule=/'
+          } > "$VERIFY_OUT/pre-build-basis.txt"
+          sha256sum "$VERIFY_OUT/pre-build-basis.txt" > "$VERIFY_OUT/pre-build-basis.sha256"
+
       - name: Run clean combined build entrypoint
         shell: bash
         env:
           MCVR_ROOT: ${{ runner.temp }}/MCVR
           VERIFY_OUT: ${{ runner.temp }}/verification/combined-build
           BUILD_JOBS: 2
-        run: bash ./tools/verify-baseline.sh combined-build
+        run: |
+          set +e
+          bash ./tools/verify-baseline.sh combined-build
+          rc=$?
+          {
+            echo "exit_code=$rc"
+            if test -f "$VERIFY_OUT/failed-phase.txt"; then
+              echo "failed_phase=$(cat "$VERIFY_OUT/failed-phase.txt")"
+            else
+              echo "failed_phase=none-recorded"
+            fi
+            for log in "$VERIFY_OUT"/*.log; do
+              test -f "$log" || continue
+              echo "===== tail:${log##*/} ====="
+              tail -n 120 "$log"
+            done
+          } > "$VERIFY_OUT/terminal-outcome.txt"
+          exit "$rc"
 
       - name: Retain combined-build evidence
         if: always()
