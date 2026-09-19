@@ -42,9 +42,9 @@ require_ancestor "$MCVR_ROOT" "$MCVR_UPSTREAM_SOURCE" "$MCVR_FORK_BASE"
 require_clean_tree "$MCVR_ROOT" "MCVR"
 
 verify_boundary() {
-  local expected_wrapper="$1"
+  local wrapper_properties="${1:-$ROOT/gradle/wrapper/gradle-wrapper.properties}"
   test -x "$ROOT/gradlew" || return 1
-  grep -q "gradle-${expected_wrapper}-" "$ROOT/gradle/wrapper/gradle-wrapper.properties" || return 1
+  grep -q 'gradle-8\.14\.1-' "$wrapper_properties" || return 1
   grep -Eq 'JavaVersion\.toVersion\(targetJavaVersion\)|JavaLanguageVersion\.of\((21|targetJavaVersion)\)' "$ROOT/build.gradle" || return 1
   grep -q 'src/main/native/include' "$ROOT/build.gradle" || return 1
 }
@@ -53,13 +53,19 @@ case "$MODE" in
   manifest)
     ;;
   boundary)
-    verify_boundary '8\.14\.1' || fail "boundary verification failed"
+    verify_boundary || fail "boundary verification failed"
     ;;
   boundary-negative)
-    if verify_boundary '0\.0\.0'; then
-      fail "negative control unexpectedly satisfied the positive verifier"
+    negative_dir="$(mktemp -d "$OUT/boundary-negative.XXXXXX")"
+    trap 'rm -rf "$negative_dir"' EXIT
+    negative_wrapper="$negative_dir/gradle-wrapper.properties"
+    cp "$ROOT/gradle/wrapper/gradle-wrapper.properties" "$negative_wrapper"
+    sed -i 's/gradle-8\.14\.1-/gradle-0.0.0-/' "$negative_wrapper"
+    cmp -s "$ROOT/gradle/wrapper/gradle-wrapper.properties" "$negative_wrapper" && fail "negative control did not corrupt the disposable wrapper input"
+    if verify_boundary "$negative_wrapper"; then
+      fail "negative control unexpectedly accepted corrupted consumed boundary input"
     fi
-    echo 'negative control rejected by positive verifier as expected'
+    echo 'negative control rejected corrupted attempt-local wrapper input as expected'
     ;;
   *)
     echo "usage: $0 {manifest|boundary|boundary-negative}" >&2
