@@ -70,6 +70,26 @@ jobs:
           VERIFY_OUT: ${{ runner.temp }}/verification/cache-negative
         run: bash ./tools/verify-baseline.sh cache-preseed-negative
 
+      - name: Prove external Gradle cache cannot satisfy proof
+        shell: bash
+        env:
+          MCVR_ROOT: ${{ runner.temp }}/MCVR
+          VERIFY_OUT: ${{ runner.temp }}/verification/cache-root-negative
+        run: |
+          set -euo pipefail
+          external="$RUNNER_TEMP/external-gradle-cache"
+          mkdir -p "$external/wrapper/dists/sentinel"
+          printf 'must-not-be-used\n' > "$external/wrapper/dists/sentinel/external.txt"
+          export GRADLE_USER_HOME="$external"
+          bash ./tools/verify-baseline.sh combined-build
+          actual="$(sed -n 's/^gradle_user_home=//p' "$VERIFY_OUT/gradle-cache-basis.txt")"
+          test -n "$actual"
+          test "$actual" != "$external"
+          case "$actual" in "$RUNNER_TEMP"/radiance-gradle-proof.*) ;; *) echo "proof cache escaped attempt-owned runner temp root: $actual" >&2; exit 1 ;; esac
+          test -f "$external/wrapper/dists/sentinel/external.txt"
+          grep -Fxq 'must-not-be-used' "$external/wrapper/dists/sentinel/external.txt"
+          printf 'external_gradle_home=%s\nactual_proof_gradle_home=%s\nexternal_cache_effect=none\n' "$external" "$actual" > "$VERIFY_OUT/cache-root-confinement.txt"
+
       - name: Retain bootstrap evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
