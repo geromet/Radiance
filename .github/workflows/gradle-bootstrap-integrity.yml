@@ -18,11 +18,20 @@ jobs:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
       TZ: UTC
+      VERIFY_PROOF_TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Check out Radiance
+      - name: Check out exact Radiance contribution head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Bind exact proof target
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$VERIFY_PROOF_TARGET_SHA"
+          printf 'proof_target_sha=%s\n' "$VERIFY_PROOF_TARGET_SHA" > "$RUNNER_TEMP/proof-target.txt"
       - name: Select Java 21 runtime
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
@@ -63,6 +72,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gradle-bootstrap-integrity-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/verification
+          path: |
+            ${{ runner.temp }}/verification
+            ${{ runner.temp }}/proof-target.txt
           if-no-files-found: warn
           retention-days: 14
