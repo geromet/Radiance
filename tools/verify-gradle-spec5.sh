@@ -11,7 +11,10 @@ fail() { echo "spec5 proof error: $*" >&2; exit 1; }
 
 run_negative() {
   local kind="$1" expected_phase="$2"
-  local child="$OUT/$kind" corrupt="$child/corrupt" sensitivity="$child/sensitivity"
+  local child corrupt sensitivity
+  child="$OUT/$kind"
+  corrupt="$child/corrupt"
+  sensitivity="$child/sensitivity"
   local jar="$ROOT/gradle/wrapper/gradle-wrapper.jar"
   local props="$ROOT/gradle/wrapper/gradle-wrapper.properties"
   local home=""
@@ -59,9 +62,9 @@ EOF
   grep -Fxq 'outcome=FAIL' "$corrupt/terminal-result.txt" || fail "$kind lacks FAIL outcome"
 
   # Same proof-bearing path sensitivity: keep the corrupt input effective and bypass only
-  # the selected repository guard. The negative oracle must no longer accept the same
-  # expected failure phase. A later native/downstream failure is deliberately not proof
-  # of the selected guard.
+  # the selected repository guard. Sensitivity is proven only if execution crosses that
+  # guard into the declared post-guard Gradle-bootstrap boundary; an unrelated preflight
+  # failure must not count as acceptance of the counterfactual.
   set +e
   case "$kind" in
     wrapper)
@@ -73,13 +76,13 @@ EOF
   esac
   local sensitivity_rc=$?
   set -e
-  local sensitivity_phase=PASS
+  local sensitivity_phase=missing
   if [[ -f "$sensitivity/terminal-result.txt" ]]; then
     sensitivity_phase="$(sed -n 's/^phase=//p' "$sensitivity/terminal-result.txt" | tail -n1)"
   fi
-  [[ "$sensitivity_phase" != "$expected_phase" ]] || fail "$kind sensitivity still satisfies intended guard oracle"
+  [[ "$sensitivity_phase" == gradle-bootstrap ]] || fail "$kind sensitivity did not cross guard into declared post-guard boundary; phase=$sensitivity_phase"
 
-  printf 'negative=%s\nexpected_phase=%s\nrejection_exit=%s\nsensitivity_exit=%s\nsensitivity_phase=%s\nresult=PASS\n' \
+  printf 'negative=%s\nexpected_phase=%s\nrejection_exit=%s\nsensitivity_exit=%s\nsensitivity_phase=%s\npost_guard_boundary=gradle-bootstrap\nresult=PASS\n' \
     "$kind" "$expected_phase" "$rc" "$sensitivity_rc" "$sensitivity_phase" > "$child/oracle.txt"
 }
 
