@@ -81,7 +81,7 @@ jobs:
           mkdir -p "$external/wrapper/dists/sentinel"
           printf 'must-not-be-used\n' > "$external/wrapper/dists/sentinel/external.txt"
           export GRADLE_USER_HOME="$external"
-          bash ./tools/verify-baseline.sh combined-build
+          bash ./tools/verify-baseline.sh gradle-bootstrap
           actual="$(sed -n 's/^gradle_user_home=//p' "$VERIFY_OUT/gradle-cache-basis.txt")"
           test -n "$actual"
           test "$actual" != "$external"
