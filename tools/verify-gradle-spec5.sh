@@ -15,6 +15,8 @@ assert_link() {
   grep -Fxq "effective_input_sha256=$digest" "$evidence/terminal-result.txt" || fail "$label terminal evidence is not linked to effective input"
 }
 
+terminal_field() { sed -n "s/^$2=//p" "$1/terminal-result.txt" | tail -n1; }
+
 run_negative() {
   local kind="$1" expected_phase="$2"
   local child corrupt sensitivity
@@ -82,15 +84,20 @@ EOF
   set -e
   local sensitivity_phase=missing sensitivity_outcome=missing
   if [[ -f "$sensitivity/terminal-result.txt" ]]; then
-    sensitivity_phase="$(sed -n 's/^phase=//p' "$sensitivity/terminal-result.txt" | tail -n1)"
-    sensitivity_outcome="$(sed -n 's/^outcome=//p' "$sensitivity/terminal-result.txt" | tail -n1)"
+    sensitivity_phase="$(terminal_field "$sensitivity" phase)"
+    sensitivity_outcome="$(terminal_field "$sensitivity" outcome)"
   fi
-  [[ $sensitivity_rc -eq 0 ]] || fail "$kind sensitivity did not complete the post-guard bootstrap; exit=$sensitivity_rc phase=$sensitivity_phase"
   assert_link "$sensitivity" "$effective_digest" "$kind sensitivity"
-  [[ "$sensitivity_phase" == terminal-evidence ]] || fail "$kind sensitivity lacks successful terminal evidence; phase=$sensitivity_phase"
-  [[ "$sensitivity_outcome" == PASS ]] || fail "$kind sensitivity lacks PASS terminal outcome; outcome=$sensitivity_outcome"
+  if [[ "$kind" == checksum ]]; then
+    [[ $sensitivity_rc -ne 0 ]] || fail "checksum sensitivity unexpectedly accepted wrong effective distribution checksum"
+    [[ "$sensitivity_phase" == gradle-bootstrap && "$sensitivity_outcome" == FAIL ]] || fail "checksum sensitivity did not reach Gradle's effective checksum rejection; exit=$sensitivity_rc phase=$sensitivity_phase outcome=$sensitivity_outcome"
+    grep -Eq 'checksum|SHA-256|verification failed|does not match' "$sensitivity/gradle-bootstrap.log" || fail "checksum sensitivity lacks Gradle checksum-rejection evidence"
+  else
+    [[ $sensitivity_rc -eq 0 ]] || fail "$kind sensitivity did not complete the post-guard bootstrap; exit=$sensitivity_rc phase=$sensitivity_phase"
+    [[ "$sensitivity_phase" == terminal-evidence ]] || fail "$kind sensitivity lacks successful terminal evidence; phase=$sensitivity_phase"
+    [[ "$sensitivity_outcome" == PASS ]] || fail "$kind sensitivity lacks PASS terminal outcome; outcome=$sensitivity_outcome"
+  fi
 
-  # Reassociation control: another effective-input digest must not validate against this attempt.
   local wrong_digest
   wrong_digest="$(printf 'reassociated:%s\n' "$effective_digest" | sha256sum | awk '{print $1}')"
   if grep -Fq "\"effective_input_sha256\":\"$wrong_digest\"" "$corrupt/attempt-basis.json" || grep -Fxq "effective_input_sha256=$wrong_digest" "$corrupt/terminal-result.txt"; then
@@ -106,14 +113,20 @@ run_masking_control() {
   local child="$OUT/earlier-failure-masking"
   mkdir -p "$child"
   set +e
-  PATH=/nonexistent VERIFY_OUT="$child" bash "$VERIFY" gradle-bootstrap >/dev/null 2>&1
+  VERIFY_OUT="$child" VERIFY_INJECT_UNRELATED_FAILURE=1 bash "$VERIFY" gradle-bootstrap >/dev/null 2>&1
   local rc=$?
   set -e
   [[ $rc -ne 0 ]] || fail "masking control unexpectedly passed"
-  if [[ -f "$child/terminal-result.txt" ]] && grep -Eq '^phase=(wrapper-jar-attestation|distribution-declaration-attestation|proof-cache-confinement)$' "$child/terminal-result.txt"; then
-    fail "earlier unrelated failure masqueraded as an integrity-guard rejection"
-  fi
-  printf 'result=PASS\nexit=%s\n' "$rc" > "$child/oracle.txt"
+  test -s "$child/attempt-basis.sha256" || fail "masking control never entered child proof path"
+  test -s "$child/terminal-result.txt" || fail "masking control lacks retained child terminal evidence"
+  local phase outcome
+  phase="$(terminal_field "$child" phase)"
+  outcome="$(terminal_field "$child" outcome)"
+  [[ "$phase" == unrelated-injected-failure && "$outcome" == FAIL ]] || fail "masking control did not retain the injected wrong-phase child failure"
+  for forbidden in wrapper-jar-attestation distribution-declaration-attestation proof-cache-confinement; do
+    [[ "$phase" != "$forbidden" ]] || fail "wrong-phase masking control satisfied integrity oracle $forbidden"
+  done
+  printf 'result=PASS\nexit=%s\nphase=%s\noutcome=%s\nchild_attempt_evidence=present\n' "$rc" "$phase" "$outcome" > "$child/oracle.txt"
 }
 
 run_negative wrapper wrapper-jar-attestation
