@@ -46,27 +46,19 @@ jobs:
           test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = c2c203c82f85d4b99bb0fff3d3a591986119f2c3
       - name: Parse shared verifier
         shell: bash
-        run: bash -n ./tools/verify-baseline.sh
+        run: |
+          bash -n ./tools/verify-baseline.sh
+          bash -n ./tools/verify-gradle-spec5.sh
       - name: Verify wrapper and distribution declarations
         shell: bash
         env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/manifest' }
         run: bash ./tools/verify-baseline.sh manifest
-      - name: Reject substituted wrapper JAR through proof boundary
+      - name: Run exact spec5 proof oracle
         shell: bash
-        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/wrapper-negative' }
-        run: bash ./tools/verify-baseline.sh wrapper-jar-negative
-      - name: Reject wrong distribution checksum through proof boundary
-        shell: bash
-        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/distribution-negative' }
-        run: bash ./tools/verify-baseline.sh distribution-checksum-negative
-      - name: Reject preseeded proof cache through proof boundary
-        shell: bash
-        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/cache-negative' }
-        run: bash ./tools/verify-baseline.sh cache-preseed-negative
-      - name: Reject proof cache root escape through proof boundary
-        shell: bash
-        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/cache-root-negative' }
-        run: bash ./tools/verify-baseline.sh cache-root-negative
+        env:
+          MCVR_ROOT: '${{ runner.temp }}/MCVR'
+          VERIFY_OUT: '${{ runner.temp }}/verification-spec5'
+        run: bash ./tools/verify-gradle-spec5.sh
       - name: Retain bootstrap evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -74,6 +66,7 @@ jobs:
           name: gradle-bootstrap-integrity-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/verification
+            ${{ runner.temp }}/verification-spec5
             ${{ runner.temp }}/proof-target.txt
           if-no-files-found: warn
           retention-days: 14
