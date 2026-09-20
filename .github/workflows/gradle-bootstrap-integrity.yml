@@ -23,13 +23,11 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-
       - name: Select Java 21 runtime
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           distribution: temurin
           java-version: '21'
-
       - name: Check out exact MCVR basis
         shell: bash
         run: |
@@ -37,59 +35,29 @@ jobs:
           git clone --filter=blob:none https://github.com/geromet/MCVR.git "$RUNNER_TEMP/MCVR"
           git -C "$RUNNER_TEMP/MCVR" checkout --detach c2c203c82f85d4b99bb0fff3d3a591986119f2c3
           test "$(git -C "$RUNNER_TEMP/MCVR" rev-parse HEAD)" = c2c203c82f85d4b99bb0fff3d3a591986119f2c3
-
       - name: Parse shared verifier
         shell: bash
         run: bash -n ./tools/verify-baseline.sh
-
       - name: Verify wrapper and distribution declarations
         shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/manifest
+        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/manifest' }
         run: bash ./tools/verify-baseline.sh manifest
-
-      - name: Reject substituted wrapper JAR before launch
+      - name: Reject substituted wrapper JAR through proof boundary
         shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/wrapper-negative
+        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/wrapper-negative' }
         run: bash ./tools/verify-baseline.sh wrapper-jar-negative
-
-      - name: Reject wrong distribution checksum declaration
+      - name: Reject wrong distribution checksum through proof boundary
         shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/distribution-negative
+        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/distribution-negative' }
         run: bash ./tools/verify-baseline.sh distribution-checksum-negative
-
-      - name: Detect preseeded proof cache state
+      - name: Reject preseeded proof cache through proof boundary
         shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/cache-negative
+        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/cache-negative' }
         run: bash ./tools/verify-baseline.sh cache-preseed-negative
-
-      - name: Prove external Gradle cache cannot satisfy proof
+      - name: Reject proof cache root escape through proof boundary
         shell: bash
-        env:
-          MCVR_ROOT: ${{ runner.temp }}/MCVR
-          VERIFY_OUT: ${{ runner.temp }}/verification/cache-root-negative
-        run: |
-          set -euo pipefail
-          external="$RUNNER_TEMP/external-gradle-cache"
-          mkdir -p "$external/wrapper/dists/sentinel"
-          printf 'must-not-be-used\n' > "$external/wrapper/dists/sentinel/external.txt"
-          export GRADLE_USER_HOME="$external"
-          bash ./tools/verify-baseline.sh gradle-bootstrap
-          actual="$(sed -n 's/^gradle_user_home=//p' "$VERIFY_OUT/gradle-cache-basis.txt")"
-          test -n "$actual"
-          test "$actual" != "$external"
-          case "$actual" in "$RUNNER_TEMP"/radiance-gradle-proof.*) ;; *) echo "proof cache escaped attempt-owned runner temp root: $actual" >&2; exit 1 ;; esac
-          test -f "$external/wrapper/dists/sentinel/external.txt"
-          grep -Fxq 'must-not-be-used' "$external/wrapper/dists/sentinel/external.txt"
-          printf 'external_gradle_home=%s\nactual_proof_gradle_home=%s\nexternal_cache_effect=none\n' "$external" "$actual" > "$VERIFY_OUT/cache-root-confinement.txt"
-
+        env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/cache-root-negative' }
+        run: bash ./tools/verify-baseline.sh cache-root-negative
       - name: Retain bootstrap evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
