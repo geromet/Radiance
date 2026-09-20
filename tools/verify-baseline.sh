@@ -52,6 +52,8 @@ require_wrapper_jar() { CURRENT_PHASE=wrapper-jar-attestation; local actual; tes
 require_wrapper_properties() { CURRENT_PHASE=distribution-declaration-attestation; grep -Fxq 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.1-bin.zip' "$WRAPPER_PROPERTIES" || fail "unexpected Gradle distribution URL"; grep -Fxq "distributionSha256Sum=$GRADLE_DIST_SHA256" "$WRAPPER_PROPERTIES" || [[ "${VERIFY_BYPASS_DISTRIBUTION_GUARD:-0}" == 1 ]] || fail "unexpected Gradle distribution checksum"; }
 prepare_proof_gradle_home() { CURRENT_PHASE=proof-cache-confinement; local base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"; if [[ -n "${VERIFY_PROOF_GRADLE_HOME:-}" ]]; then PROOF_GRADLE_HOME="$VERIFY_PROOF_GRADLE_HOME"; else PROOF_GRADLE_HOME="$(mktemp -d "$base/radiance-gradle-proof.XXXXXX")"; fi; if [[ "${VERIFY_BYPASS_CACHE_GUARD:-0}" != 1 ]]; then test ! -e "$PROOF_GRADLE_HOME/wrapper/dists" || fail "proof Gradle distribution cache was preseeded"; case "$PROOF_GRADLE_HOME" in "$base"/radiance-gradle-proof.*) ;; *) fail "proof Gradle cache escaped attempt-owned root";; esac; fi; export GRADLE_USER_HOME="$PROOF_GRADLE_HOME"; printf 'gradle_user_home=%s\nwrapper_dists_initial=absent\n' "$GRADLE_USER_HOME" > "$OUT/gradle-cache-basis.txt"; }
 pre_gradle_proof() { require_wrapper_jar; require_wrapper_properties; prepare_proof_gradle_home; printf 'wrapper_jar_sha256=%s\ndistribution_sha256=%s\n' "$WRAPPER_JAR_SHA256" "$GRADLE_DIST_SHA256" > "$OUT/gradle-bootstrap-basis.txt"; }
+prepare_effective_wrapper() { CURRENT_PHASE=effective-wrapper-materialization; EFFECTIVE_WRAPPER_DIR="$OUT/effective-wrapper"; rm -rf "$EFFECTIVE_WRAPPER_DIR"; mkdir -p "$EFFECTIVE_WRAPPER_DIR"; cp "$WRAPPER_JAR" "$EFFECTIVE_WRAPPER_DIR/gradle-wrapper.jar"; cp "$WRAPPER_PROPERTIES" "$EFFECTIVE_WRAPPER_DIR/gradle-wrapper.properties"; printf 'wrapper_jar_sha256=%s\nwrapper_properties_sha256=%s\n' "$(file_sha256 "$EFFECTIVE_WRAPPER_DIR/gradle-wrapper.jar")" "$(file_sha256 "$EFFECTIVE_WRAPPER_DIR/gradle-wrapper.properties")" > "$OUT/effective-wrapper-basis.txt"; }
+run_effective_gradle() { prepare_effective_wrapper; java -classpath "$EFFECTIVE_WRAPPER_DIR/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"; }
 run_phase() { local n="$1"; shift; CURRENT_PHASE="$n"; local log="$OUT/$n.log"; echo "==> $n" | tee "$log"; if ! "$@" 2>&1 | tee -a "$log"; then printf '%s\n' "$n" > "$OUT/failed-phase.txt"; return 1; fi; printf 'PASS\n' > "$OUT/$n.status"; }
 verify_boundary() { local r="$1"; test -x "$r/gradlew" && grep -q 'gradle-8\.14\.1-' "$r/gradle/wrapper/gradle-wrapper.properties" && grep -Eq 'JavaVersion\.toVersion\(targetJavaVersion\)|JavaLanguageVersion\.of\((21|targetJavaVersion)\)' "$r/build.gradle" && grep -q 'src/main/native/include' "$r/build.gradle"; }
 
@@ -89,17 +91,17 @@ case "$MODE" in
  distribution-checksum-negative) proof_negative checksum;;
  cache-preseed-negative) proof_negative preseed;;
  cache-root-negative) proof_negative escape;;
- gradle-bootstrap) require_java21_runtime; pre_gradle_proof; run_phase gradle-bootstrap "$ROOT/gradlew" --no-daemon --version || fail "Gradle bootstrap proof failed";;
+ gradle-bootstrap) require_java21_runtime; pre_gradle_proof; run_phase gradle-bootstrap run_effective_gradle --no-daemon --version || fail "Gradle bootstrap proof failed";;
  combined-build)
    require_java21_runtime; pre_gradle_proof
-   run_phase radiance-jni "$ROOT/gradlew" --no-daemon compileJava || fail "Radiance JNI generation failed"
+   run_phase radiance-jni run_effective_gradle --no-daemon compileJava || fail "Radiance JNI generation failed"
    test -d "$ROOT/src/main/native/include" || fail "Radiance JNI include directory was not generated"
    CURRENT_PHASE=mcvr-submodules; git -C "$MCVR_ROOT" submodule update --init --recursive 2>&1 | tee "$OUT/mcvr-submodules.log" || fail "MCVR recursive submodule initialization failed"
    MCVR_BUILD="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/mcvr-build.XXXXXX")"
    run_phase mcvr-configure cmake -S "$MCVR_ROOT" -B "$MCVR_BUILD" -DCMAKE_BUILD_TYPE=Release -DJAVA_PROJECT_ROOT_DIR="$ROOT" -DUSE_AMD=ON -DMCVR_ENABLE_FFX_UPSCALER=OFF -DMCVR_ENABLE_NRD=ON || fail "MCVR configure failed"
    run_phase mcvr-build cmake --build "$MCVR_BUILD" --parallel "${BUILD_JOBS:-2}" || fail "MCVR build failed"
    run_phase mcvr-install cmake --install "$MCVR_BUILD" || fail "MCVR install failed"
-   require_wrapper_jar; run_phase radiance-package "$ROOT/gradlew" --no-daemon build || fail "final Radiance package failed"
+   require_wrapper_jar; run_phase radiance-package run_effective_gradle --no-daemon build || fail "final Radiance package failed"
    find "$ROOT/build/libs" -maxdepth 1 -type f -print0 | sort -z | xargs -0 -r sha256sum > "$OUT/radiance-artifacts.sha256";;
  *) echo "usage: $0 {manifest|boundary|boundary-negative|java-major-negative|wrapper-jar-negative|distribution-checksum-negative|cache-preseed-negative|cache-root-negative|gradle-bootstrap|combined-build}" >&2; exit 2;;
 esac
