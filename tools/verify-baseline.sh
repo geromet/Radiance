@@ -55,7 +55,9 @@ run_phase() { local n="$1"; shift; CURRENT_PHASE="$n"; local log="$OUT/$n.log"; 
 verify_boundary() { local r="$1"; test -x "$r/gradlew" && grep -q 'gradle-8\.14\.1-' "$r/gradle/wrapper/gradle-wrapper.properties" && grep -Eq 'JavaVersion\.toVersion\(targetJavaVersion\)|JavaLanguageVersion\.of\((21|targetJavaVersion)\)' "$r/build.gradle" && grep -q 'src/main/native/include' "$r/build.gradle"; }
 
 proof_negative() {
-  local kind="$1" child="$OUT/proof-negative-$kind"; mkdir -p "$child"
+  local kind="$1"
+  local child="$OUT/proof-negative-$kind"
+  mkdir -p "$child"
   local jar="$ROOT/gradle/wrapper/gradle-wrapper.jar" props="$ROOT/gradle/wrapper/gradle-wrapper.properties" home=""
   case "$kind" in
     wrapper) jar="$(mktemp "$OUT/substituted.XXXXXX.jar")"; cp "$ROOT/gradle/wrapper/gradle-wrapper.jar" "$jar"; printf '\001' >> "$jar";;
