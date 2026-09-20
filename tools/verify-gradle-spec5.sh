@@ -11,15 +11,16 @@ fail() { echo "spec5 proof error: $*" >&2; exit 1; }
 
 evidence_link_valid() {
   local evidence="$1" effective_input="$2" digest
-  local attempt_count attempt_value terminal_count terminal_value
+  local attempt_count attempt_string_count attempt_value terminal_count terminal_value
   digest="$(sha256_file "$effective_input")"
 
-  # Canonical linkage means exactly one binding field on each retained evidence
-  # surface, and that sole binding must equal the digest of the effective-input
-  # bytes. Counting only the authentic-value literal would accept an authentic
-  # binding plus a conflicting duplicate.
-  attempt_count="$(grep -o '"effective_input_sha256"[[:space:]]*:[[:space:]]*"[^"]*"' "$evidence/attempt-basis.json" | wc -l | tr -d '[:space:]')"
+  # Count the JSON member name independently of its value type. Counting only
+  # string-valued authentic bindings would accept an authentic string plus a
+  # duplicate null/number/object member and leave parser choice ambiguous.
+  attempt_count="$(grep -o '"effective_input_sha256"[[:space:]]*:' "$evidence/attempt-basis.json" | wc -l | tr -d '[:space:]')"
   [[ "$attempt_count" == 1 ]] || return 1
+  attempt_string_count="$(grep -o '"effective_input_sha256"[[:space:]]*:[[:space:]]*"[^"]*"' "$evidence/attempt-basis.json" | wc -l | tr -d '[:space:]')"
+  [[ "$attempt_string_count" == 1 ]] || return 1
   attempt_value="$(grep -o '"effective_input_sha256"[[:space:]]*:[[:space:]]*"[^"]*"' "$evidence/attempt-basis.json" | sed -E 's/^.*:[[:space:]]*"([^"]*)"$/\1/')"
 
   terminal_count="$(grep -Ec '^effective_input_sha256=' "$evidence/terminal-result.txt")"
@@ -85,7 +86,6 @@ run_negative() {
   write_effective_input "$child/effective-input.json" "$kind" "$wrapper_digest" "$props_digest" "$cache_role" "$cache_state" "$expected_phase"
   effective_digest="$(sha256_file "$child/effective-input.json")"
   printf '%s  %s\n' "$effective_digest" "$child/effective-input.json" > "$child/effective-input.sha256"
-  # Concrete randomized paths are diagnostic confinement evidence only; they must not perturb semantic attempt identity.
   printf 'proof_cache_role=%s\nproof_cache_path=%s\n' "$cache_role" "${home:-auto-attempt-owned}" > "$child/cache-path.txt"
 
   if [[ "$kind" == preseed || "$kind" == escape ]]; then
@@ -142,10 +142,7 @@ run_negative() {
     [[ "$sensitivity_outcome" == PASS ]] || fail "$kind sensitivity lacks PASS terminal outcome; outcome=$sensitivity_outcome"
   fi
 
-  # Reassociation control: mutate both retained bindings as an attacker would, then submit
-  # the rebound evidence to the same validator. The validator derives the authoritative
-  # digest from the effective-input bytes rather than trusting an attacker-supplied digest.
-  local wrong_digest rebound duplicate_attempt duplicate_terminal
+  local wrong_digest rebound duplicate_attempt duplicate_terminal duplicate_attempt_null duplicate_attempt_number
   wrong_digest="$(printf 'reassociated:%s\n' "$effective_digest" | sha256sum | awk '{print $1}')"
   rebound="$child/reassociated-evidence"
   mkdir -p "$rebound"
@@ -155,11 +152,8 @@ run_negative() {
   if evidence_link_valid "$rebound" "$child/effective-input.json"; then
     fail "$kind reassociation control accepted rebound retained evidence"
   fi
-  # Validator sensitivity: untouched retained evidence must still be accepted by the exact predicate.
   evidence_link_valid "$corrupt" "$child/effective-input.json" || fail "$kind linkage validator sensitivity rejected authentic retained evidence"
 
-  # Uniqueness controls: one authentic binding plus a conflicting duplicate must be rejected
-  # on either retained evidence surface. Mere existential presence is not canonical linkage.
   duplicate_attempt="$child/duplicate-attempt-binding"
   mkdir -p "$duplicate_attempt"
   cp "$corrupt/attempt-basis.json" "$duplicate_attempt/attempt-basis.json"
@@ -167,6 +161,24 @@ run_negative() {
   sed -i "s/}$/,\"effective_input_sha256\":\"$wrong_digest\"}/" "$duplicate_attempt/attempt-basis.json"
   if evidence_link_valid "$duplicate_attempt" "$child/effective-input.json"; then
     fail "$kind linkage validator accepted conflicting duplicate attempt-basis binding"
+  fi
+
+  duplicate_attempt_null="$child/duplicate-attempt-null-binding"
+  mkdir -p "$duplicate_attempt_null"
+  cp "$corrupt/attempt-basis.json" "$duplicate_attempt_null/attempt-basis.json"
+  cp "$corrupt/terminal-result.txt" "$duplicate_attempt_null/terminal-result.txt"
+  sed -i 's/}$/,"effective_input_sha256":null}/' "$duplicate_attempt_null/attempt-basis.json"
+  if evidence_link_valid "$duplicate_attempt_null" "$child/effective-input.json"; then
+    fail "$kind linkage validator accepted duplicate null attempt-basis binding"
+  fi
+
+  duplicate_attempt_number="$child/duplicate-attempt-number-binding"
+  mkdir -p "$duplicate_attempt_number"
+  cp "$corrupt/attempt-basis.json" "$duplicate_attempt_number/attempt-basis.json"
+  cp "$corrupt/terminal-result.txt" "$duplicate_attempt_number/terminal-result.txt"
+  sed -i 's/}$/,"effective_input_sha256":0}/' "$duplicate_attempt_number/attempt-basis.json"
+  if evidence_link_valid "$duplicate_attempt_number" "$child/effective-input.json"; then
+    fail "$kind linkage validator accepted duplicate numeric attempt-basis binding"
   fi
 
   duplicate_terminal="$child/duplicate-terminal-binding"
@@ -178,7 +190,7 @@ run_negative() {
     fail "$kind linkage validator accepted conflicting duplicate terminal binding"
   fi
 
-  printf 'effective=%s\nreassociated=%s\nrebound_attempt_submitted=yes\nrebound_terminal_submitted=yes\nvalidator_rejected_rebound=yes\nvalidator_rejected_duplicate_attempt=yes\nvalidator_rejected_duplicate_terminal=yes\nvalidator_accepted_authentic=yes\nresult=PASS\n' \
+  printf 'effective=%s\nreassociated=%s\nrebound_attempt_submitted=yes\nrebound_terminal_submitted=yes\nvalidator_rejected_rebound=yes\nvalidator_rejected_duplicate_attempt=yes\nvalidator_rejected_duplicate_attempt_null=yes\nvalidator_rejected_duplicate_attempt_number=yes\nvalidator_rejected_duplicate_terminal=yes\nvalidator_accepted_authentic=yes\nresult=PASS\n' \
     "$effective_digest" "$wrong_digest" > "$child/reassociation-control.txt"
 
   printf 'negative=%s\neffective_input_sha256=%s\nexpected_phase=%s\nrejection_exit=%s\nsensitivity_exit=%s\nsensitivity_phase=%s\nsensitivity_outcome=%s\npost_guard_boundary=gradle-bootstrap\nresult=PASS\n' \
