@@ -113,6 +113,12 @@ case "$MODE" in
     if test ! -e "$PROOF_GRADLE_HOME/wrapper/dists"; then fail "preseed negative setup failed"; fi
     echo 'preseeded cache state detected before wrapper launch as expected'
     ;;
+  gradle-bootstrap)
+    rm -f "$OUT/failed-phase.txt"
+    require_java21_runtime
+    pre_gradle_proof
+    run_phase gradle-bootstrap "$ROOT/gradlew" --no-daemon --version || fail "Gradle bootstrap proof failed"
+    ;;
   combined-build)
     rm -f "$OUT/failed-phase.txt"
     require_java21_runtime
@@ -128,7 +134,7 @@ case "$MODE" in
     run_phase radiance-package "$ROOT/gradlew" --no-daemon build || fail "final Radiance package failed"
     find "$ROOT/build/libs" -maxdepth 1 -type f -print0 | sort -z | xargs -0 -r sha256sum > "$OUT/radiance-artifacts.sha256"
     ;;
-  *) echo "usage: $0 {manifest|boundary|boundary-negative|java-major-negative|wrapper-jar-negative|distribution-checksum-negative|cache-preseed-negative|combined-build}" >&2; exit 2 ;;
+  *) echo "usage: $0 {manifest|boundary|boundary-negative|java-major-negative|wrapper-jar-negative|distribution-checksum-negative|cache-preseed-negative|gradle-bootstrap|combined-build}" >&2; exit 2 ;;
 esac
 
 cat > "$OUT/input-manifest.json" <<EOF
