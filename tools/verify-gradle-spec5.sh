@@ -9,18 +9,24 @@ mkdir -p "$OUT"
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 fail() { echo "spec5 proof error: $*" >&2; exit 1; }
 
-count_literal() {
-  local file="$1" needle="$2"
-  awk -v needle="$needle" '{ line=$0; while ((pos=index(line,needle)) > 0) { count++; line=substr(line,pos+length(needle)); } } END { print count+0 }' "$file"
-}
-
 evidence_link_valid() {
-  local evidence="$1" effective_input="$2" digest attempt_binding terminal_binding
+  local evidence="$1" effective_input="$2" digest
+  local attempt_count attempt_value terminal_count terminal_value
   digest="$(sha256_file "$effective_input")"
-  attempt_binding="\"effective_input_sha256\":\"$digest\""
-  terminal_binding="effective_input_sha256=$digest"
-  [[ "$(count_literal "$evidence/attempt-basis.json" "$attempt_binding")" == 1 ]] &&
-    [[ "$(count_literal "$evidence/terminal-result.txt" "$terminal_binding")" == 1 ]]
+
+  # Canonical linkage means exactly one binding field on each retained evidence
+  # surface, and that sole binding must equal the digest of the effective-input
+  # bytes. Counting only the authentic-value literal would accept an authentic
+  # binding plus a conflicting duplicate.
+  attempt_count="$(grep -o '"effective_input_sha256"[[:space:]]*:[[:space:]]*"[^"]*"' "$evidence/attempt-basis.json" | wc -l | tr -d '[:space:]')"
+  [[ "$attempt_count" == 1 ]] || return 1
+  attempt_value="$(grep -o '"effective_input_sha256"[[:space:]]*:[[:space:]]*"[^"]*"' "$evidence/attempt-basis.json" | sed -E 's/^.*:[[:space:]]*"([^"]*)"$/\1/')"
+
+  terminal_count="$(grep -Ec '^effective_input_sha256=' "$evidence/terminal-result.txt")"
+  [[ "$terminal_count" == 1 ]] || return 1
+  terminal_value="$(sed -n 's/^effective_input_sha256=//p' "$evidence/terminal-result.txt")"
+
+  [[ "$attempt_value" == "$digest" && "$terminal_value" == "$digest" ]]
 }
 
 assert_link() {
