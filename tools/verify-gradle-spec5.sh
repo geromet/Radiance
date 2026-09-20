@@ -9,6 +9,12 @@ mkdir -p "$OUT"
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 fail() { echo "spec5 proof error: $*" >&2; exit 1; }
 
+assert_link() {
+  local evidence="$1" digest="$2" label="$3"
+  grep -Fq "\"effective_input_sha256\":\"$digest\"" "$evidence/attempt-basis.json" || fail "$label attempt basis is not linked to effective input"
+  grep -Fxq "effective_input_sha256=$digest" "$evidence/terminal-result.txt" || fail "$label terminal evidence is not linked to effective input"
+}
+
 run_negative() {
   local kind="$1" expected_phase="$2"
   local child corrupt sensitivity
@@ -41,7 +47,7 @@ run_negative() {
     *) fail "unknown negative $kind" ;;
   esac
 
-  local wrapper_digest props_digest cache_state cache_root
+  local wrapper_digest props_digest cache_state cache_root effective_digest
   wrapper_digest="$(sha256_file "$jar")"
   props_digest="$(sha256_file "$props")"
   cache_root="${home:-auto-attempt-owned}"
@@ -49,30 +55,28 @@ run_negative() {
   cat > "$child/effective-input.json" <<EOF
 {"schema":5,"negative":"$kind","wrapper_sha256":"$wrapper_digest","wrapper_properties_sha256":"$props_digest","proof_cache_root":"$cache_root","proof_cache_initial_state":"$cache_state","expected_failure_phase":"$expected_phase"}
 EOF
-  sha256sum "$child/effective-input.json" > "$child/effective-input.sha256"
+  effective_digest="$(sha256_file "$child/effective-input.json")"
+  printf '%s  %s\n' "$effective_digest" "$child/effective-input.json" > "$child/effective-input.sha256"
 
   set +e
-  VERIFY_OUT="$corrupt" VERIFY_WRAPPER_JAR="$jar" VERIFY_WRAPPER_PROPERTIES="$props" VERIFY_PROOF_GRADLE_HOME="$home" bash "$VERIFY" gradle-bootstrap
+  VERIFY_OUT="$corrupt" VERIFY_EFFECTIVE_INPUT_SHA256="$effective_digest" VERIFY_WRAPPER_JAR="$jar" VERIFY_WRAPPER_PROPERTIES="$props" VERIFY_PROOF_GRADLE_HOME="$home" bash "$VERIFY" gradle-bootstrap
   local rc=$?
   set -e
   [[ $rc -ne 0 ]] || fail "$kind corrupt-input proof unexpectedly passed"
   test -s "$corrupt/attempt-basis.sha256" || fail "$kind lacks pre-effect base identity"
   test -s "$corrupt/terminal-result.txt" || fail "$kind lacks terminal evidence"
+  assert_link "$corrupt" "$effective_digest" "$kind corrupt"
   grep -Fxq "phase=$expected_phase" "$corrupt/terminal-result.txt" || fail "$kind rejected at wrong phase; expected $expected_phase"
   grep -Fxq 'outcome=FAIL' "$corrupt/terminal-result.txt" || fail "$kind lacks FAIL outcome"
 
-  # Same proof-bearing path sensitivity: keep the corrupt input effective and bypass only
-  # the selected repository guard. Sensitivity is proven only when the guarded bootstrap
-  # completes successfully after crossing that guard. A different downstream failure must
-  # not count as acceptance of the counterfactual.
   set +e
   case "$kind" in
     wrapper)
-      VERIFY_OUT="$sensitivity" VERIFY_WRAPPER_JAR="$jar" VERIFY_BYPASS_WRAPPER_GUARD=1 bash "$VERIFY" gradle-bootstrap ;;
+      VERIFY_OUT="$sensitivity" VERIFY_EFFECTIVE_INPUT_SHA256="$effective_digest" VERIFY_WRAPPER_JAR="$jar" VERIFY_BYPASS_WRAPPER_GUARD=1 bash "$VERIFY" gradle-bootstrap ;;
     checksum)
-      VERIFY_OUT="$sensitivity" VERIFY_WRAPPER_PROPERTIES="$props" VERIFY_BYPASS_DISTRIBUTION_GUARD=1 bash "$VERIFY" gradle-bootstrap ;;
+      VERIFY_OUT="$sensitivity" VERIFY_EFFECTIVE_INPUT_SHA256="$effective_digest" VERIFY_WRAPPER_PROPERTIES="$props" VERIFY_BYPASS_DISTRIBUTION_GUARD=1 bash "$VERIFY" gradle-bootstrap ;;
     preseed|escape)
-      VERIFY_OUT="$sensitivity" VERIFY_PROOF_GRADLE_HOME="$home" VERIFY_BYPASS_CACHE_GUARD=1 bash "$VERIFY" gradle-bootstrap ;;
+      VERIFY_OUT="$sensitivity" VERIFY_EFFECTIVE_INPUT_SHA256="$effective_digest" VERIFY_PROOF_GRADLE_HOME="$home" VERIFY_BYPASS_CACHE_GUARD=1 bash "$VERIFY" gradle-bootstrap ;;
   esac
   local sensitivity_rc=$?
   set -e
@@ -82,11 +86,20 @@ EOF
     sensitivity_outcome="$(sed -n 's/^outcome=//p' "$sensitivity/terminal-result.txt" | tail -n1)"
   fi
   [[ $sensitivity_rc -eq 0 ]] || fail "$kind sensitivity did not complete the post-guard bootstrap; exit=$sensitivity_rc phase=$sensitivity_phase"
+  assert_link "$sensitivity" "$effective_digest" "$kind sensitivity"
   [[ "$sensitivity_phase" == terminal-evidence ]] || fail "$kind sensitivity lacks successful terminal evidence; phase=$sensitivity_phase"
   [[ "$sensitivity_outcome" == PASS ]] || fail "$kind sensitivity lacks PASS terminal outcome; outcome=$sensitivity_outcome"
 
-  printf 'negative=%s\nexpected_phase=%s\nrejection_exit=%s\nsensitivity_exit=%s\nsensitivity_phase=%s\nsensitivity_outcome=%s\npost_guard_boundary=gradle-bootstrap\nresult=PASS\n' \
-    "$kind" "$expected_phase" "$rc" "$sensitivity_rc" "$sensitivity_phase" "$sensitivity_outcome" > "$child/oracle.txt"
+  # Reassociation control: another effective-input digest must not validate against this attempt.
+  local wrong_digest
+  wrong_digest="$(printf 'reassociated:%s\n' "$effective_digest" | sha256sum | awk '{print $1}')"
+  if grep -Fq "\"effective_input_sha256\":\"$wrong_digest\"" "$corrupt/attempt-basis.json" || grep -Fxq "effective_input_sha256=$wrong_digest" "$corrupt/terminal-result.txt"; then
+    fail "$kind reassociation control unexpectedly matched retained attempt evidence"
+  fi
+  printf 'expected=%s\nreassociated=%s\nresult=PASS\n' "$effective_digest" "$wrong_digest" > "$child/reassociation-control.txt"
+
+  printf 'negative=%s\neffective_input_sha256=%s\nexpected_phase=%s\nrejection_exit=%s\nsensitivity_exit=%s\nsensitivity_phase=%s\nsensitivity_outcome=%s\npost_guard_boundary=gradle-bootstrap\nresult=PASS\n' \
+    "$kind" "$effective_digest" "$expected_phase" "$rc" "$sensitivity_rc" "$sensitivity_phase" "$sensitivity_outcome" > "$child/oracle.txt"
 }
 
 run_masking_control() {
