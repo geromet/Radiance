@@ -9,10 +9,16 @@ mkdir -p "$OUT"
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 fail() { echo "spec5 proof error: $*" >&2; exit 1; }
 
+evidence_link_valid() {
+  local evidence="$1" effective_input="$2" digest
+  digest="$(sha256_file "$effective_input")"
+  grep -Fq "\"effective_input_sha256\":\"$digest\"" "$evidence/attempt-basis.json" &&
+    grep -Fxq "effective_input_sha256=$digest" "$evidence/terminal-result.txt"
+}
+
 assert_link() {
-  local evidence="$1" digest="$2" label="$3"
-  grep -Fq "\"effective_input_sha256\":\"$digest\"" "$evidence/attempt-basis.json" || fail "$label attempt basis is not linked to effective input"
-  grep -Fxq "effective_input_sha256=$digest" "$evidence/terminal-result.txt" || fail "$label terminal evidence is not linked to effective input"
+  local evidence="$1" effective_input="$2" label="$3"
+  evidence_link_valid "$evidence" "$effective_input" || fail "$label retained evidence is not linked to the effective input bytes"
 }
 
 terminal_field() { sed -n "s/^$2=//p" "$1/terminal-result.txt" | tail -n1; }
@@ -92,7 +98,7 @@ run_negative() {
   [[ $rc -ne 0 ]] || fail "$kind corrupt-input proof unexpectedly passed"
   test -s "$corrupt/attempt-basis.sha256" || fail "$kind lacks pre-effect base identity"
   test -s "$corrupt/terminal-result.txt" || fail "$kind lacks terminal evidence"
-  assert_link "$corrupt" "$effective_digest" "$kind corrupt"
+  assert_link "$corrupt" "$child/effective-input.json" "$kind corrupt"
   grep -Fxq "phase=$expected_phase" "$corrupt/terminal-result.txt" || fail "$kind rejected at wrong phase; expected $expected_phase"
   grep -Fxq 'outcome=FAIL' "$corrupt/terminal-result.txt" || fail "$kind lacks FAIL outcome"
 
@@ -112,7 +118,7 @@ run_negative() {
     sensitivity_phase="$(terminal_field "$sensitivity" phase)"
     sensitivity_outcome="$(terminal_field "$sensitivity" outcome)"
   fi
-  assert_link "$sensitivity" "$effective_digest" "$kind sensitivity"
+  assert_link "$sensitivity" "$child/effective-input.json" "$kind sensitivity"
   if [[ "$kind" == checksum ]]; then
     [[ $sensitivity_rc -ne 0 ]] || fail "checksum sensitivity unexpectedly accepted wrong effective distribution checksum"
     [[ "$sensitivity_phase" == gradle-bootstrap && "$sensitivity_outcome" == FAIL ]] || fail "checksum sensitivity did not reach Gradle's effective checksum rejection; exit=$sensitivity_rc phase=$sensitivity_phase outcome=$sensitivity_outcome"
@@ -123,12 +129,23 @@ run_negative() {
     [[ "$sensitivity_outcome" == PASS ]] || fail "$kind sensitivity lacks PASS terminal outcome; outcome=$sensitivity_outcome"
   fi
 
-  local wrong_digest
+  # Reassociation control: mutate both retained bindings as an attacker would, then submit
+  # the rebound evidence to the same validator. The validator derives the authoritative
+  # digest from the effective-input bytes rather than trusting an attacker-supplied digest.
+  local wrong_digest rebound
   wrong_digest="$(printf 'reassociated:%s\n' "$effective_digest" | sha256sum | awk '{print $1}')"
-  if grep -Fq "\"effective_input_sha256\":\"$wrong_digest\"" "$corrupt/attempt-basis.json" || grep -Fxq "effective_input_sha256=$wrong_digest" "$corrupt/terminal-result.txt"; then
-    fail "$kind reassociation control unexpectedly matched retained attempt evidence"
+  rebound="$child/reassociated-evidence"
+  mkdir -p "$rebound"
+  cp "$corrupt/attempt-basis.json" "$rebound/attempt-basis.json"
+  cp "$corrupt/terminal-result.txt" "$rebound/terminal-result.txt"
+  sed -i "s/$effective_digest/$wrong_digest/g" "$rebound/attempt-basis.json" "$rebound/terminal-result.txt"
+  if evidence_link_valid "$rebound" "$child/effective-input.json"; then
+    fail "$kind reassociation control accepted rebound retained evidence"
   fi
-  printf 'expected=%s\nreassociated=%s\nresult=PASS\n' "$effective_digest" "$wrong_digest" > "$child/reassociation-control.txt"
+  # Validator sensitivity: untouched retained evidence must still be accepted by the exact predicate.
+  evidence_link_valid "$corrupt" "$child/effective-input.json" || fail "$kind linkage validator sensitivity rejected authentic retained evidence"
+  printf 'effective=%s\nreassociated=%s\nrebound_attempt_submitted=yes\nrebound_terminal_submitted=yes\nvalidator_rejected_rebound=yes\nvalidator_accepted_authentic=yes\nresult=PASS\n' \
+    "$effective_digest" "$wrong_digest" > "$child/reassociation-control.txt"
 
   printf 'negative=%s\neffective_input_sha256=%s\nexpected_phase=%s\nrejection_exit=%s\nsensitivity_exit=%s\nsensitivity_phase=%s\nsensitivity_outcome=%s\npost_guard_boundary=gradle-bootstrap\nresult=PASS\n' \
     "$kind" "$effective_digest" "$expected_phase" "$rc" "$sensitivity_rc" "$sensitivity_phase" "$sensitivity_outcome" > "$child/oracle.txt"
