@@ -40,6 +40,11 @@ CURRENT_PHASE=preflight
 finish() { local rc=$? outcome=PASS; [[ $rc -eq 0 ]] || outcome=FAIL; printf 'mode=%s\nphase=%s\noutcome=%s\nexit_code=%s\neffective_input_sha256=%s\n' "$MODE" "$CURRENT_PHASE" "$outcome" "$rc" "$EFFECTIVE_INPUT_SHA256" > "$OUT/terminal-result.txt"; }
 trap finish EXIT
 
+if [[ "${VERIFY_INJECT_UNRELATED_FAILURE:-0}" == 1 ]]; then
+  CURRENT_PHASE=unrelated-injected-failure
+  fail "injected unrelated child-path failure"
+fi
+
 require_commit "$ROOT" "$FORK_BASE"; require_commit "$ROOT" "$UPSTREAM_SOURCE"; require_ancestor "$ROOT" "$UPSTREAM_SOURCE" "$FORK_BASE"; require_ancestor "$ROOT" "$FORK_BASE" "$RADIANCE_HEAD"
 git -C "$MCVR_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "MCVR_ROOT is not a Git checkout"
 require_commit "$MCVR_ROOT" "$MCVR_FORK_BASE"; require_commit "$MCVR_ROOT" "$MCVR_UPSTREAM_SOURCE"; require_ancestor "$MCVR_ROOT" "$MCVR_UPSTREAM_SOURCE" "$MCVR_FORK_BASE"
