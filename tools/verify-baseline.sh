@@ -28,15 +28,16 @@ require_java21_runtime() { require_exact_java21_settings "$(java -XshowSettings:
 RADIANCE_HEAD="$(sha "$ROOT")"
 MCVR_HEAD="$(sha "$MCVR_ROOT")"
 [[ "$RADIANCE_HEAD" =~ ^[0-9a-f]{40}$ && "$MCVR_HEAD" =~ ^[0-9a-f]{40}$ ]] || fail "invalid repository head"
+EFFECTIVE_INPUT_SHA256="${VERIFY_EFFECTIVE_INPUT_SHA256:-none}"
+[[ "$EFFECTIVE_INPUT_SHA256" == none || "$EFFECTIVE_INPUT_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "invalid effective-input digest binding"
 
-# Spec 4: establish immutable attempt identity before Java/Gradle/CMake or mutable build inputs.
 cat > "$OUT/attempt-basis.json" <<EOF
-{"schema":5,"mode":"$MODE","radiance_head":"$RADIANCE_HEAD","mcvr_head":"$MCVR_HEAD","wrapper_expected_sha256":"$WRAPPER_JAR_SHA256","distribution_expected_sha256":"$GRADLE_DIST_SHA256"}
+{"schema":5,"mode":"$MODE","radiance_head":"$RADIANCE_HEAD","mcvr_head":"$MCVR_HEAD","wrapper_expected_sha256":"$WRAPPER_JAR_SHA256","distribution_expected_sha256":"$GRADLE_DIST_SHA256","effective_input_sha256":"$EFFECTIVE_INPUT_SHA256"}
 EOF
 sha256sum "$OUT/attempt-basis.json" > "$OUT/attempt-basis.sha256"
 printf 'mode=%s\nphase=preflight\noutcome=STARTED\n' "$MODE" > "$OUT/terminal-result.txt"
 CURRENT_PHASE=preflight
-finish() { local rc=$? outcome=PASS; [[ $rc -eq 0 ]] || outcome=FAIL; printf 'mode=%s\nphase=%s\noutcome=%s\nexit_code=%s\n' "$MODE" "$CURRENT_PHASE" "$outcome" "$rc" > "$OUT/terminal-result.txt"; }
+finish() { local rc=$? outcome=PASS; [[ $rc -eq 0 ]] || outcome=FAIL; printf 'mode=%s\nphase=%s\noutcome=%s\nexit_code=%s\neffective_input_sha256=%s\n' "$MODE" "$CURRENT_PHASE" "$outcome" "$rc" "$EFFECTIVE_INPUT_SHA256" > "$OUT/terminal-result.txt"; }
 trap finish EXIT
 
 require_commit "$ROOT" "$FORK_BASE"; require_commit "$ROOT" "$UPSTREAM_SOURCE"; require_ancestor "$ROOT" "$UPSTREAM_SOURCE" "$FORK_BASE"; require_ancestor "$ROOT" "$FORK_BASE" "$RADIANCE_HEAD"
@@ -71,7 +72,6 @@ proof_negative() {
   [[ $rc -ne 0 ]] || fail "$kind proof negative unexpectedly passed"
   grep -Fxq 'outcome=FAIL' "$child/terminal-result.txt" || fail "$kind negative lacks terminal failure evidence"
   test -s "$child/attempt-basis.sha256" || fail "$kind negative lacks pre-effect attempt identity"
-  # Sensitivity: bypassing the selected guard must make this negative oracle fail (child succeeds).
   case "$kind" in
     wrapper) VERIFY_OUT="$child/sensitivity" VERIFY_WRAPPER_JAR="$jar" VERIFY_BYPASS_WRAPPER_GUARD=1 bash "$0" manifest >/dev/null;;
     checksum) VERIFY_OUT="$child/sensitivity" VERIFY_WRAPPER_PROPERTIES="$props" VERIFY_BYPASS_DISTRIBUTION_GUARD=1 bash "$0" manifest >/dev/null;;
