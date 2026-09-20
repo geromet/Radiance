@@ -9,16 +9,23 @@ mkdir -p "$OUT"
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 fail() { echo "spec5 proof error: $*" >&2; exit 1; }
 
+count_literal() {
+  local file="$1" needle="$2"
+  awk -v needle="$needle" '{ line=$0; while ((pos=index(line,needle)) > 0) { count++; line=substr(line,pos+length(needle)); } } END { print count+0 }' "$file"
+}
+
 evidence_link_valid() {
-  local evidence="$1" effective_input="$2" digest
+  local evidence="$1" effective_input="$2" digest attempt_binding terminal_binding
   digest="$(sha256_file "$effective_input")"
-  grep -Fq "\"effective_input_sha256\":\"$digest\"" "$evidence/attempt-basis.json" &&
-    grep -Fxq "effective_input_sha256=$digest" "$evidence/terminal-result.txt"
+  attempt_binding="\"effective_input_sha256\":\"$digest\""
+  terminal_binding="effective_input_sha256=$digest"
+  [[ "$(count_literal "$evidence/attempt-basis.json" "$attempt_binding")" == 1 ]] &&
+    [[ "$(count_literal "$evidence/terminal-result.txt" "$terminal_binding")" == 1 ]]
 }
 
 assert_link() {
   local evidence="$1" effective_input="$2" label="$3"
-  evidence_link_valid "$evidence" "$effective_input" || fail "$label retained evidence is not linked to the effective input bytes"
+  evidence_link_valid "$evidence" "$effective_input" || fail "$label retained evidence is not uniquely linked to the effective input bytes"
 }
 
 terminal_field() { sed -n "s/^$2=//p" "$1/terminal-result.txt" | tail -n1; }
@@ -132,7 +139,7 @@ run_negative() {
   # Reassociation control: mutate both retained bindings as an attacker would, then submit
   # the rebound evidence to the same validator. The validator derives the authoritative
   # digest from the effective-input bytes rather than trusting an attacker-supplied digest.
-  local wrong_digest rebound
+  local wrong_digest rebound duplicate_attempt duplicate_terminal
   wrong_digest="$(printf 'reassociated:%s\n' "$effective_digest" | sha256sum | awk '{print $1}')"
   rebound="$child/reassociated-evidence"
   mkdir -p "$rebound"
@@ -144,7 +151,28 @@ run_negative() {
   fi
   # Validator sensitivity: untouched retained evidence must still be accepted by the exact predicate.
   evidence_link_valid "$corrupt" "$child/effective-input.json" || fail "$kind linkage validator sensitivity rejected authentic retained evidence"
-  printf 'effective=%s\nreassociated=%s\nrebound_attempt_submitted=yes\nrebound_terminal_submitted=yes\nvalidator_rejected_rebound=yes\nvalidator_accepted_authentic=yes\nresult=PASS\n' \
+
+  # Uniqueness controls: one authentic binding plus a conflicting duplicate must be rejected
+  # on either retained evidence surface. Mere existential presence is not canonical linkage.
+  duplicate_attempt="$child/duplicate-attempt-binding"
+  mkdir -p "$duplicate_attempt"
+  cp "$corrupt/attempt-basis.json" "$duplicate_attempt/attempt-basis.json"
+  cp "$corrupt/terminal-result.txt" "$duplicate_attempt/terminal-result.txt"
+  sed -i "s/}$/,\"effective_input_sha256\":\"$wrong_digest\"}/" "$duplicate_attempt/attempt-basis.json"
+  if evidence_link_valid "$duplicate_attempt" "$child/effective-input.json"; then
+    fail "$kind linkage validator accepted conflicting duplicate attempt-basis binding"
+  fi
+
+  duplicate_terminal="$child/duplicate-terminal-binding"
+  mkdir -p "$duplicate_terminal"
+  cp "$corrupt/attempt-basis.json" "$duplicate_terminal/attempt-basis.json"
+  cp "$corrupt/terminal-result.txt" "$duplicate_terminal/terminal-result.txt"
+  printf 'effective_input_sha256=%s\n' "$wrong_digest" >> "$duplicate_terminal/terminal-result.txt"
+  if evidence_link_valid "$duplicate_terminal" "$child/effective-input.json"; then
+    fail "$kind linkage validator accepted conflicting duplicate terminal binding"
+  fi
+
+  printf 'effective=%s\nreassociated=%s\nrebound_attempt_submitted=yes\nrebound_terminal_submitted=yes\nvalidator_rejected_rebound=yes\nvalidator_rejected_duplicate_attempt=yes\nvalidator_rejected_duplicate_terminal=yes\nvalidator_accepted_authentic=yes\nresult=PASS\n' \
     "$effective_digest" "$wrong_digest" > "$child/reassociation-control.txt"
 
   printf 'negative=%s\neffective_input_sha256=%s\nexpected_phase=%s\nrejection_exit=%s\nsensitivity_exit=%s\nsensitivity_phase=%s\nsensitivity_outcome=%s\npost_guard_boundary=gradle-bootstrap\nresult=PASS\n' \
