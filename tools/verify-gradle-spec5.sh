@@ -17,6 +17,13 @@ assert_link() {
 
 terminal_field() { sed -n "s/^$2=//p" "$1/terminal-result.txt" | tail -n1; }
 
+write_effective_input() {
+  local path="$1" kind="$2" wrapper_digest="$3" props_digest="$4" cache_role="$5" cache_state="$6" expected_phase="$7"
+  cat > "$path" <<EOF
+{"schema":5,"negative":"$kind","wrapper_sha256":"$wrapper_digest","wrapper_properties_sha256":"$props_digest","proof_cache_role":"$cache_role","proof_cache_initial_state":"$cache_state","expected_failure_phase":"$expected_phase"}
+EOF
+}
+
 run_negative() {
   local kind="$1" expected_phase="$2"
   local child corrupt sensitivity
@@ -26,6 +33,7 @@ run_negative() {
   local jar="$ROOT/gradle/wrapper/gradle-wrapper.jar"
   local props="$ROOT/gradle/wrapper/gradle-wrapper.properties"
   local home=""
+  local cache_role="attempt-owned-auto"
   mkdir -p "$corrupt" "$sensitivity"
 
   case "$kind" in
@@ -41,24 +49,41 @@ run_negative() {
       ;;
     preseed)
       home="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/radiance-gradle-proof.XXXXXX")"
+      cache_role="attempt-owned-preseeded"
       mkdir -p "$home/wrapper/dists/fake"
       ;;
     escape)
       home="$(mktemp -d "${TMPDIR:-/tmp}/radiance-gradle-external.XXXXXX")"
+      cache_role="external-escape"
       ;;
     *) fail "unknown negative $kind" ;;
   esac
 
-  local wrapper_digest props_digest cache_state cache_root effective_digest
+  local wrapper_digest props_digest cache_state effective_digest
   wrapper_digest="$(sha256_file "$jar")"
   props_digest="$(sha256_file "$props")"
-  cache_root="${home:-auto-attempt-owned}"
   if [[ -n "$home" && -e "$home/wrapper/dists" ]]; then cache_state=preseeded; else cache_state=absent; fi
-  cat > "$child/effective-input.json" <<EOF
-{"schema":5,"negative":"$kind","wrapper_sha256":"$wrapper_digest","wrapper_properties_sha256":"$props_digest","proof_cache_root":"$cache_root","proof_cache_initial_state":"$cache_state","expected_failure_phase":"$expected_phase"}
-EOF
+  write_effective_input "$child/effective-input.json" "$kind" "$wrapper_digest" "$props_digest" "$cache_role" "$cache_state" "$expected_phase"
   effective_digest="$(sha256_file "$child/effective-input.json")"
   printf '%s  %s\n' "$effective_digest" "$child/effective-input.json" > "$child/effective-input.sha256"
+  # Concrete randomized paths are diagnostic confinement evidence only; they must not perturb semantic attempt identity.
+  printf 'proof_cache_role=%s\nproof_cache_path=%s\n' "$cache_role" "${home:-auto-attempt-owned}" > "$child/cache-path.txt"
+
+  if [[ "$kind" == preseed || "$kind" == escape ]]; then
+    local replay_home replay_digest
+    if [[ "$kind" == preseed ]]; then
+      replay_home="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/radiance-gradle-proof.XXXXXX")"
+      mkdir -p "$replay_home/wrapper/dists/fake"
+    else
+      replay_home="$(mktemp -d "${TMPDIR:-/tmp}/radiance-gradle-external.XXXXXX")"
+    fi
+    [[ "$replay_home" != "$home" ]] || fail "$kind stability control did not obtain a distinct concrete cache path"
+    write_effective_input "$child/effective-input-replay.json" "$kind" "$wrapper_digest" "$props_digest" "$cache_role" "$cache_state" "$expected_phase"
+    replay_digest="$(sha256_file "$child/effective-input-replay.json")"
+    [[ "$replay_digest" == "$effective_digest" ]] || fail "$kind semantic cache identity changed across equivalent randomized paths"
+    printf 'first_path=%s\nsecond_path=%s\nsemantic_digest=%s\nresult=PASS\n' "$home" "$replay_home" "$effective_digest" > "$child/cache-identity-stability.txt"
+    rm -rf "$replay_home"
+  fi
 
   set +e
   VERIFY_OUT="$corrupt" VERIFY_EFFECTIVE_INPUT_SHA256="$effective_digest" VERIFY_WRAPPER_JAR="$jar" VERIFY_WRAPPER_PROPERTIES="$props" VERIFY_PROOF_GRADLE_HOME="$home" bash "$VERIFY" gradle-bootstrap
