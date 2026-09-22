@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,7 +45,12 @@ class RootAuthorityTests(unittest.TestCase):
             digest = hashlib.sha256(GOOD).hexdigest()
             artifact = root / "artifact"
             rootauth.acquire(source, artifact, digest)
-            (artifact / "syscall_64.tbl").write_bytes(GOOD + b"2 common open sys_open\n")
+            retained = artifact / "syscall_64.tbl"
+            # Acquisition deliberately makes the retained object read-only. The
+            # negative fixture explicitly simulates an out-of-band replacement.
+            retained.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            retained.write_bytes(GOOD + b"2 common open sys_open\n")
+            retained.chmod(stat.S_IRUSR)
             with self.assertRaises(rootauth.VerificationError):
                 rootauth.verify_offline(artifact, digest)
 
