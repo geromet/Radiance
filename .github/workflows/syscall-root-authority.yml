@@ -1,0 +1,24 @@
+name: Syscall root authority
+
+on:
+  push:
+    branches:
+      - phase0/538-java-runtime-identity
+  pull_request:
+    paths:
+      - tools/syscall-root-authority.py
+      - tools/test-syscall-root-authority.py
+      - .github/workflows/syscall-root-authority.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run fail-closed root-authority fixtures
+        run: python3 tools/test-syscall-root-authority.py
