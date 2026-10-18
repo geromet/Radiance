@@ -6,14 +6,17 @@ an observed daemon command line, it identifies the Gradle launcher JAR used by
 that process, requires it to live in a conventional extracted Gradle
 installation, and emits a canonical content digest for that installation.
 
-The caller is responsible for obtaining cmdline bytes from the actual daemon
-(e.g. /proc/<pid>/cmdline) and binding the resulting record to the accepted
-attempt/process/start identity.
+The caller must obtain cmdline bytes from the actual daemon (e.g.
+/proc/<pid>/cmdline), supply a trusted, independently admitted Gradle
+distribution root, and bind the resulting record to the accepted
+attempt/process/start identity. This comparator is NOT that process witness,
+a raw-Git source seal, or an end-to-end spec-7 acceptance oracle.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -35,8 +38,7 @@ def canonical_tree_digest(root: Path) -> tuple[str, int]:
         st = path.lstat()
         mode = stat.S_IMODE(st.st_mode)
         if path.is_symlink():
-            kind = "symlink"
-            payload = os.readlink(path).encode("utf-8", "surrogateescape")
+            fail(f"symlink in Gradle distribution is not admitted: {rel}")
         elif path.is_file():
             kind = "file"
             payload = path.read_bytes()
@@ -78,6 +80,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cmdline-file", required=True, type=Path)
     parser.add_argument("--expected-root", type=Path)
+    parser.add_argument("--admitted-root", required=True, type=Path,
+                        help="externally admitted distribution contents; NOT a daemon self-report")
     parser.add_argument("--output", required=True, type=Path)
     ns = parser.parse_args()
 
@@ -92,6 +96,10 @@ def main() -> int:
 
     launcher_sha = hashlib.sha256(launcher.read_bytes()).hexdigest()
     tree_sha, object_count = canonical_tree_digest(root)
+    admitted_root = ns.admitted_root.resolve(strict=True)
+    admitted_tree_sha, admitted_count = canonical_tree_digest(admitted_root)
+    if not hmac.compare_digest(tree_sha, admitted_tree_sha) or object_count != admitted_count:
+        fail("executing Gradle distribution content differs from admitted content")
     record = {
         "schema": 1,
         "gradle_version": "8.14.1",
@@ -100,6 +108,9 @@ def main() -> int:
         "launcher_sha256": launcher_sha,
         "distribution_tree_sha256": tree_sha,
         "distribution_object_count": object_count,
+        "admitted_distribution_tree_sha256": admitted_tree_sha,
+        "admitted_distribution_object_count": admitted_count,
+        "distribution_content_reconciled": True,
     }
     ns.output.parent.mkdir(parents=True, exist_ok=True)
     ns.output.write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
