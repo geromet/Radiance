@@ -49,6 +49,9 @@ jobs:
         run: |
           bash -n ./tools/verify-baseline.sh
           bash -n ./tools/verify-gradle-spec5.sh
+      - name: Verify admitted Gradle distribution content controls
+        shell: bash
+        run: python3 ./tools/test-gradle-distribution-identity.py
       - name: Verify wrapper and distribution declarations
         shell: bash
         env: { MCVR_ROOT: '${{ runner.temp }}/MCVR', VERIFY_OUT: '${{ runner.temp }}/verification/manifest' }
