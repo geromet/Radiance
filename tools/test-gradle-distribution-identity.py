@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
+"""Deterministic fixture checks for the external Gradle content comparator.
+
+These test *content reconciliation*, not actual daemon ownership, PID/start
+correlation, source sealing, or complete spec-7 acceptance.
+"""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -19,13 +25,28 @@ def make_dist(base: Path, marker: bytes) -> Path:
     return root
 
 
-def identify(dist: Path, work: Path, name: str) -> dict:
+def identify(dist: Path, admitted: Path, work: Path, name: str,
+             *, expected_root: Path | None = None, success: bool = True) -> dict | None:
     cmdline = work / f"{name}.cmdline"
     output = work / f"{name}.json"
     launcher = dist / "lib" / "gradle-launcher-8.14.1.jar"
-    cmdline.write_bytes(("java\0-cp\0" + str(launcher) + "\0org.gradle.launcher.daemon.bootstrap.GradleDaemon\0").encode())
-    subprocess.run([sys.executable, str(HELPER), "--cmdline-file", str(cmdline), "--expected-root", str(dist), "--output", str(output)], check=True)
-    return json.loads(output.read_text())
+    cmdline.write_bytes(("java\0-cp\0" + str(launcher)
+                         + "\0org.gradle.launcher.daemon.bootstrap.GradleDaemon\0").encode())
+    args = [sys.executable, str(HELPER), "--cmdline-file", str(cmdline),
+            "--admitted-root", str(admitted), "--output", str(output)]
+    if expected_root is not None:
+        args += ["--expected-root", str(expected_root)]
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if success:
+        assert proc.returncode == 0, proc.stderr
+        assert output.is_file(), "accepted content had no evidence"
+        result = json.loads(output.read_text())
+        assert result["distribution_content_reconciled"] is True
+        assert result["distribution_tree_sha256"] == result["admitted_distribution_tree_sha256"]
+        return result
+    assert proc.returncode != 0, "non-equivalent content was accepted"
+    assert not output.exists(), "failed reconciliation emitted accepted evidence"
+    return None
 
 
 def main() -> int:
@@ -34,19 +55,19 @@ def main() -> int:
         a = make_dist(work / "a", b"same")
         relocated = make_dist(work / "relocated", b"same")
         foreign = make_dist(work / "foreign", b"different")
+        symlinked = make_dist(work / "symlinked", b"same")
+        os.symlink("/etc/passwd", symlinked / "redirect")
 
-        a_id = identify(a, work, "a")
-        relocated_id = identify(relocated, work, "relocated")
-        foreign_id = identify(foreign, work, "foreign")
+        a_id = identify(a, a, work, "a")
+        relocated_id = identify(relocated, a, work, "relocated")
+        assert a_id["distribution_tree_sha256"] == relocated_id["distribution_tree_sha256"], "equivalent relocated content was rejected"
+        assert a_id["distribution_root"] != relocated_id["distribution_root"], "relocation fixture is not distinct"
 
-        assert a_id["distribution_tree_sha256"] == relocated_id["distribution_tree_sha256"], "equivalent relocation changed content identity"
-        assert a_id["distribution_tree_sha256"] != foreign_id["distribution_tree_sha256"], "non-equivalent same-version distribution inherited identity"
-
-        wrong = work / "wrong.json"
-        proc = subprocess.run([sys.executable, str(HELPER), "--cmdline-file", str(work / "a.cmdline"), "--expected-root", str(foreign), "--output", str(wrong)])
-        assert proc.returncode != 0, "wrong expected distribution root was accepted"
-        assert not wrong.exists(), "failed identity check emitted accepted evidence"
-    print("gradle-distribution-identity controls: PASS")
+        identify(foreign, a, work, "foreign", success=False)
+        identify(a, foreign, work, "wrong-admission", success=False)
+        identify(a, a, work, "wrong-root", expected_root=foreign, success=False)
+        identify(symlinked, symlinked, work, "symlink-escape", success=False)
+    print("gradle-distribution-identity content controls: PASS (not full spec-7)")
     return 0
 
 
